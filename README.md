@@ -1,20 +1,34 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Transport Fare Tracker
 
-# Run and deploy your AI Studio app
+A modern, calendar-based tracking tool designed to help you monitor your daily morning and evening transit expenses. 
 
-This contains everything you need to run your app locally.
+## Features
+- **Daily Fare Tracking**: Log morning and evening fares directly onto a calendar view.
+- **Multiple Views**: Switch between Day, Week, Month, and Year views seamlessly.
+- **Cloud Backup**: Sign in with your Google account and safely sync your tracked fares to the cloud.
+- **Currency Customization**: Select your preferred currency.
+- **Daily Reminders**: Enable daily notification reminders so you never forget to log your commute expenses.
+- **Data Export**: Export your monthly fare data as an Excel/CSV file for your own records.
 
-View your app in AI Studio: https://ai.studio/apps/179b89ed-446d-4112-a68a-e6a42feb52e1
+## Technology Stack
+- **Framework**: React 18, Vite
+- **Styling**: Tailwind CSS
+- **Icons**: Lucide React
+- **Dates**: date-fns
+- **Charts**: Recharts
+- **Database / Auth**: Firebase (Firestore, Google Authentication)
 
-## Run Locally
-
-**Prerequisites:**  Node.js
-
+## Running Locally
 
 1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+   ```bash
+   npm install
+   ```
+2. Start the development server:
+   ```bash
+   npm run dev
+   ```
+
+## Deploying
+
+Remember to configure your Firebase Authorized Domains if deploying to platforms like Vercel, Netlify, or Firebase Hosting. Include the deployment domain in your Firebase Console -> Authentication -> Settings -> Authorized Domains.

@@ -301,8 +301,13 @@ export default function App() {
         // Automatically sync existing local data to the new user account
         await syncLocalDataToCloud(result.user.uid, fares);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Login failed", err);
+      if (err.code === 'auth/unauthorized-domain') {
+        alert("Login failed: This domain is not authorized for Firebase auth. Please add this domain to your Firebase Console -> Authentication -> Settings -> Authorized domains.");
+      } else {
+        alert("Login failed: " + err.message);
+      }
     }
   };
 
