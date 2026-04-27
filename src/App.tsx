@@ -1222,7 +1222,7 @@ export default function App() {
               </button>
             </div>
             
-            <div className="space-y-6 overflow-y-auto flex-1 min-h-0 px-1 -mx-1 pb-4">
+            <div className="space-y-6 overflow-y-auto hide-scrollbar flex-1 min-h-0 px-1 -mx-1 pb-4">
               {/* Appearance & Preferences Section */}
               <div className="space-y-4">
                 <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Preferences</h4>

@@ -2,6 +2,16 @@
 
 @variant dark (&:where(.dark, .dark *));
 
+@layer utilities {
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
 @theme {
   --color-primary-50: var(--theme-50, var(--color-indigo-50));
   --color-primary-100: var(--theme-100, var(--color-indigo-100));
