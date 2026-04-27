@@ -1,0 +1,60 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return request.auth != null; }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    match /users/{userId} {
+      
+      match /fares/{fareId} {
+        function isValidFare(data) {
+          return data.keys().hasAll(['userId']) && 
+                 data.userId == request.auth.uid &&
+                 ( !('morning' in data) || (data.morning is string && data.morning.size() <= 50)) &&
+                 ( !('evening' in data) || (data.evening is string && data.evening.size() <= 50)) &&
+                 ( !('crossedOut' in data) || data.crossedOut is bool) &&
+                 ( !('updatedAt' in data) || data.updatedAt == request.time || data.updatedAt is timestamp );
+        }
+
+        allow get: if isOwner(userId);
+        // Ensure query filters by userId
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+
+        allow create: if isOwner(userId) && isValidId(fareId) && isValidFare(incoming());
+        allow update: if isOwner(userId) && isValidFare(incoming()) && incoming().userId == existing().userId &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['morning', 'evening', 'crossedOut', 'updatedAt']);
+        allow delete: if isOwner(userId);
+      }
+
+      match /settings/preferences {
+        function isValidSettings(data) {
+          return data.keys().hasAll(['userId', 'currency']) && 
+                 data.userId == request.auth.uid &&
+                 data.currency is string && data.currency.size() <= 10 &&
+                 (!('remindersEnabled' in data) || data.remindersEnabled is bool) &&
+                 (!('morningReminderTime' in data) || (data.morningReminderTime is string && data.morningReminderTime.size() <= 10)) &&
+                 (!('eveningReminderTime' in data) || (data.eveningReminderTime is string && data.eveningReminderTime.size() <= 10));
+        }
+
+        allow get: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidSettings(incoming());
+        allow update: if isOwner(userId) && isValidSettings(incoming()) && incoming().userId == existing().userId &&
+             incoming().diff(existing()).affectedKeys().hasOnly(['currency', 'remindersEnabled', 'morningReminderTime', 'eveningReminderTime']);
+        allow delete: if isOwner(userId);
+      }
+    }
+  }
+}

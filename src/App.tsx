@@ -1,0 +1,1236 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { 
+  format, 
+  addMonths, 
+  subMonths, 
+  addDays,
+  subDays,
+  addWeeks,
+  subWeeks,
+  addYears,
+  subYears,
+  startOfYear,
+  endOfYear,
+  eachMonthOfInterval,
+  isSameDay,
+  isSameWeek,
+  isSameYear,
+  startOfMonth, 
+  endOfMonth, 
+  eachDayOfInterval, 
+  isToday,
+  startOfWeek,
+  endOfWeek,
+  isSameMonth
+} from 'date-fns';
+import { 
+  Calendar,
+  Layers,
+  LayoutGrid,
+  ChevronLeft, 
+  ChevronRight, 
+  TrendingUp, 
+  Download,
+  Sun,
+  Moon,
+  X,
+  LogIn,
+  LogOut,
+  Loader2,
+  Maximize2,
+  Minimize2,
+  Settings,
+  Bell
+} from 'lucide-react';
+import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+import { ComposedChart, Line, Bar, Tooltip, ResponsiveContainer, ReferenceLine, XAxis, YAxis, CartesianGrid } from 'recharts';
+import * as XLSX from 'xlsx';
+import Holidays from 'date-holidays';
+import { 
+  auth, 
+  db, 
+  googleProvider, 
+  signInWithPopup, 
+  signOut, 
+  onAuthStateChanged,
+  collection,
+  doc,
+  setDoc,
+  serverTimestamp,
+  handleFirestoreError,
+  OperationType,
+  query,
+  where,
+  onSnapshot
+} from './lib/firebase';
+
+const hd = new Holidays('GH');
+
+// --- Utility ---
+function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
+
+// --- Types ---
+interface DayFare {
+  morning: string;
+  evening: string;
+  crossedOut?: boolean;
+}
+
+interface MonthlyFares {
+  [dateKey: string]: DayFare;
+}
+
+const STORAGE_KEY = 'transport_fares_data';
+
+const CURRENCY_SYMBOLS: Record<string, string> = {
+  'GHS': '₵',
+  'USD': '$',
+  'EUR': '€',
+  'GBP': '£',
+  'NGN': '₦',
+  'ZAR': 'R'
+};
+
+function getIsCrossedOut(day: Date, dayFare: DayFare | undefined) {
+  if (dayFare && dayFare.crossedOut !== undefined) {
+      return dayFare.crossedOut;
+  }
+  const isWeekend = day.getDay() === 0 || day.getDay() === 6;
+  const isPubHoliday = hd.isHoliday(day) !== false;
+  const hasEnteredFare = dayFare ? (parseFloat(dayFare.morning) > 0 || parseFloat(dayFare.evening) > 0) : false;
+  return (isWeekend || isPubHoliday) && !hasEnteredFare;
+}
+
+function FareInput({ valueInGhs, rate, onChange, placeholder, typeContext }: { valueInGhs: string, rate: number, onChange: (v: string) => void, placeholder: string, typeContext: 'morning' | 'evening' }) {
+  const [localVal, setLocalVal] = useState('');
+
+  useEffect(() => {
+    if (valueInGhs) {
+      const converted = (parseFloat(valueInGhs) * rate);
+      const str = converted.toFixed(2).replace(/\.?0+$/, '');
+      if (parseFloat(localVal || '0') !== converted) {
+        setLocalVal(str);
+      }
+    } else {
+      setLocalVal('');
+    }
+  }, [valueInGhs, rate]);
+
+  return (
+    <div className="relative group">
+      <div className={cn(
+        "absolute left-1.5 top-1/2 -translate-y-1/2 pointer-events-none transition-colors",
+        valueInGhs ? "text-current opacity-70" : "text-slate-400 dark:text-slate-500"
+      )}>
+        {typeContext === 'morning' ? <Sun size={12} /> : <Moon size={12} />}
+      </div>
+      <input
+        type="number"
+        step="any"
+        placeholder={placeholder}
+        value={localVal}
+        onChange={(e) => {
+          setLocalVal(e.target.value);
+          const num = parseFloat(e.target.value);
+          if (!isNaN(num)) {
+            onChange((num / rate).toString());
+          } else if (e.target.value === '') {
+            onChange('');
+          }
+        }}
+        className={cn(
+          "w-full pl-7 pr-2 py-1 sm:py-1.5 text-xs font-medium rounded outline-none transition-all placeholder:text-center sm:placeholder:text-left",
+          valueInGhs
+            ? typeContext === 'morning'
+              ? "bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 placeholder:text-blue-300 dark:placeholder:text-blue-500 shadow-inner"
+              : "bg-indigo-50 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 placeholder:text-indigo-300 dark:placeholder:text-indigo-500 shadow-inner"
+            : typeContext === 'morning'
+              ? "bg-transparent border border-dashed border-slate-300/60 dark:border-slate-600 text-slate-600 dark:text-slate-300 placeholder:text-slate-400 dark:placeholder:text-slate-500 group-hover:border-slate-400 dark:group-hover:border-slate-500 focus:border-blue-400 focus:bg-blue-50 dark:focus:bg-blue-900/20 focus:text-blue-700 dark:focus:text-blue-300"
+              : "bg-transparent border border-dashed border-slate-300/60 dark:border-slate-600 text-slate-600 dark:text-slate-300 placeholder:text-slate-400 dark:placeholder:text-slate-500 group-hover:border-slate-400 dark:group-hover:border-slate-500 focus:border-indigo-400 focus:bg-indigo-50 dark:focus:bg-indigo-900/20 focus:text-indigo-700 dark:focus:text-indigo-300"
+        )}
+      />
+    </div>
+  );
+}
+
+export default function App() {
+  const [currentDate, setCurrentDate] = useState(new Date());
+  
+  // Authentication State
+  const [user, setUser] = useState<any>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  
+  const [fares, setFares] = useState<MonthlyFares>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    return saved ? JSON.parse(saved) : {};
+  });
+
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    const saved = localStorage.getItem('darkMode');
+    return saved !== null ? saved === 'true' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+  });
+
+  const [currency, setCurrency] = useState(() => localStorage.getItem('currency') || 'GHS');
+  const [rates, setRates] = useState<Record<string, number>>({'GHS': 1});
+
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    localStorage.setItem('darkMode', String(isDarkMode));
+  }, [isDarkMode]);
+
+  useEffect(() => {
+    fetch('https://open.er-api.com/v6/latest/GHS')
+      .then(res => res.json())
+      .then(data => {
+        if(data && data.rates) {
+          setRates(data.rates);
+        }
+      })
+      .catch(err => console.error("Failed to fetch rates", err));
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('currency', currency);
+  }, [currency]);
+
+  const currentRate = rates[currency] || 1;
+  const currentSymbol = CURRENCY_SYMBOLS[currency] || currency;
+
+  const [isCompactMode, setIsCompactMode] = useState(false);
+  const [view, setView] = useState<'day' | 'week' | 'month' | 'year'>('month');
+  const [selectedChartDay, setSelectedChartDay] = useState<{date: string, morningParsed: number, eveningParsed: number, total: number} | null>(null);
+
+  // Auto-detect screen size for default view
+  useEffect(() => {
+    const isMobile = window.innerWidth < 768;
+    setView(isMobile ? 'day' : 'month');
+  }, []);
+
+  const [remindersEnabled, setRemindersEnabled] = useState(() => localStorage.getItem('remindersEnabled') === 'true');
+  const [morningReminderTime, setMorningReminderTime] = useState(() => localStorage.getItem('morningReminderTime') || '08:00');
+  const [eveningReminderTime, setEveningReminderTime] = useState(() => localStorage.getItem('eveningReminderTime') || '18:00');
+  const [showSettings, setShowSettings] = useState(false);
+
+  // Sync auth state
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setAuthLoading(false);
+    });
+    return unsubscribe;
+  }, []);
+
+  // Sync from Firestore when logged in
+  useEffect(() => {
+    if (!user) return;
+    
+    // Listen to user preferences (currency)
+    const prefsPath = `users/${user.uid}/settings`;
+    const unsubPrefs = onSnapshot(doc(db, prefsPath, 'preferences'), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.currency) setCurrency(data.currency);
+        if (data.remindersEnabled !== undefined) setRemindersEnabled(data.remindersEnabled);
+        if (data.morningReminderTime) setMorningReminderTime(data.morningReminderTime);
+        if (data.eveningReminderTime) setEveningReminderTime(data.eveningReminderTime);
+      }
+    }, (err) => {
+      if (err.message.includes('permission')) {
+        handleFirestoreError(err, OperationType.GET, prefsPath);
+      }
+    });
+
+    // Listen to all user fares
+    const faresPath = `users/${user.uid}/fares`;
+    const unsubFares = onSnapshot(query(collection(db, faresPath), where('userId', '==', user.uid)), (snapshot) => {
+      const data: MonthlyFares = {};
+      snapshot.forEach(doc => {
+        data[doc.id] = doc.data() as DayFare;
+      });
+      setFares(prev => {
+        // Merge cloud with local to not overwrite completely immediately, or just take cloud
+        // For simplicity, let's take cloud state as source of truth for all synced days
+        return { ...prev, ...data };
+      });
+    }, (err) => {
+      if (err.message.includes('permission')) {
+        handleFirestoreError(err, OperationType.LIST, faresPath);
+      }
+    });
+
+    return () => {
+      unsubPrefs();
+      unsubFares();
+    };
+  }, [user]);
+
+  // Handle Login/Logout
+  const syncLocalDataToCloud = async (uid: string, localFares: MonthlyFares) => {
+    const fareDocPath = `users/${uid}/fares`;
+    const promises = Object.entries(localFares).map(([dateKey, fare]) => {
+      return setDoc(doc(db, fareDocPath, dateKey), {
+        ...fare,
+        userId: uid,
+        updatedAt: serverTimestamp()
+      });
+    });
+    try {
+      await Promise.all(promises);
+      console.log("Successfully synced local data to cloud");
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, fareDocPath);
+    }
+  };
+
+  const handleLogin = async () => {
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      if (result.user && Object.keys(fares).length > 0) {
+        // Automatically sync existing local data to the new user account
+        await syncLocalDataToCloud(result.user.uid, fares);
+      }
+    } catch (err) {
+      console.error("Login failed", err);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      setFares({}); // Clear out on logout or keep local? We might keep local. Let's rely on local storage.
+    } catch (err) {
+      console.error("Logout failed", err);
+    }
+  };
+
+  // Sync Settings to Firestore and localStorage
+  useEffect(() => {
+    localStorage.setItem('currency', currency);
+    localStorage.setItem('remindersEnabled', String(remindersEnabled));
+    localStorage.setItem('morningReminderTime', morningReminderTime);
+    localStorage.setItem('eveningReminderTime', eveningReminderTime);
+    if (user) {
+      const prefsPath = `users/${user.uid}/settings`;
+      setDoc(doc(db, prefsPath, 'preferences'), {
+        userId: user.uid,
+        currency,
+        remindersEnabled,
+        morningReminderTime,
+        eveningReminderTime
+      }).catch(err => handleFirestoreError(err, OperationType.WRITE, prefsPath));
+    }
+  }, [currency, remindersEnabled, morningReminderTime, eveningReminderTime, user]);
+
+  // Save to localStorage whenever fares change
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(fares));
+  }, [fares]);
+
+  // Handle Notifications
+  useEffect(() => {
+    if (!remindersEnabled) return;
+
+    if (Notification.permission !== 'granted' && Notification.permission !== 'denied') {
+      Notification.requestPermission();
+    }
+
+    const checkReminders = () => {
+      const now = new Date();
+      const currentHours = now.getHours().toString().padStart(2, '0');
+      const currentMinutes = now.getMinutes().toString().padStart(2, '0');
+      const currentTimeStr = `${currentHours}:${currentMinutes}`;
+      
+      const lastRemindedDate = localStorage.getItem('lastRemindedDate');
+      const todayStr = format(now, 'yyyy-MM-dd');
+      const lastRemindedTime = localStorage.getItem('lastRemindedTime');
+
+      if (lastRemindedDate === todayStr && lastRemindedTime === currentTimeStr) {
+        return; // Already reminded for this minute
+      }
+
+      const showNotification = (title: string, body: string) => {
+        if (Notification.permission === 'granted') {
+          new Notification(title, { body });
+        }
+      };
+
+      if (currentTimeStr === morningReminderTime) {
+        showNotification("Morning Commute", "Don't forget to log your morning transit fare.");
+        localStorage.setItem('lastRemindedDate', todayStr);
+        localStorage.setItem('lastRemindedTime', currentTimeStr);
+      } else if (currentTimeStr === eveningReminderTime) {
+        showNotification("Evening Commute", "Don't forget to log your evening transit fare.");
+        localStorage.setItem('lastRemindedDate', todayStr);
+        localStorage.setItem('lastRemindedTime', currentTimeStr);
+      }
+    };
+
+    const interval = setInterval(checkReminders, 20000); // Check every 20 seconds
+    checkReminders(); // check immediately
+
+    return () => clearInterval(interval);
+  }, [remindersEnabled, morningReminderTime, eveningReminderTime]);
+
+  const monthStart = startOfMonth(currentDate);
+  const monthEnd = endOfMonth(currentDate);
+  const startDate = startOfWeek(monthStart, { weekStartsOn: 1 });
+  const endDate = endOfWeek(monthEnd, { weekStartsOn: 1 });
+
+  const calendarDays = eachDayOfInterval({
+    start: startDate,
+    end: endDate,
+  });
+
+  const handleNext = () => {
+    switch(view) {
+      case 'day': setCurrentDate(prev => addDays(prev, 1)); break;
+      case 'week': setCurrentDate(prev => addWeeks(prev, 1)); break;
+      case 'month': setCurrentDate(prev => addMonths(prev, 1)); break;
+      case 'year': setCurrentDate(prev => addYears(prev, 1)); break;
+    }
+  };
+
+  const handlePrev = () => {
+    switch(view) {
+      case 'day': setCurrentDate(prev => subDays(prev, 1)); break;
+      case 'week': setCurrentDate(prev => subWeeks(prev, 1)); break;
+      case 'month': setCurrentDate(prev => subMonths(prev, 1)); break;
+      case 'year': setCurrentDate(prev => subYears(prev, 1)); break;
+    }
+  };
+
+  const handleNextMonth = handleNext;
+  const handlePrevMonth = handlePrev;
+
+  const handleFareChange = (date: Date, type: 'morning' | 'evening', value: string) => {
+    const dateKey = format(date, 'yyyy-MM-dd');
+    setFares(prev => {
+      const current = (prev[dateKey] as DayFare) || { morning: '', evening: '' };
+      const updated = {
+        ...current,
+        [type]: value,
+        crossedOut: false
+      };
+      
+      const newState = {
+        ...prev,
+        [dateKey]: updated
+      };
+      
+      if (user) {
+        const fareDocPath = `users/${user.uid}/fares`;
+        setDoc(doc(db, fareDocPath, dateKey), {
+          ...updated,
+          userId: user.uid,
+          updatedAt: serverTimestamp()
+        }).catch(err => handleFirestoreError(err, OperationType.WRITE, fareDocPath));
+      }
+      
+      return newState;
+    });
+  };
+
+  const handleToggleCrossOut = (date: Date) => {
+    const dateKey = format(date, 'yyyy-MM-dd');
+    setFares(prev => {
+      const current = prev[dateKey] || { morning: '', evening: '' };
+      const currentlyCrossedOut = getIsCrossedOut(date, current);
+      const updated = {
+        ...current,
+        crossedOut: !currentlyCrossedOut
+      };
+      const newState = {
+        ...prev,
+        [dateKey]: updated
+      };
+      
+      if (user) {
+        const fareDocPath = `users/${user.uid}/fares`;
+        setDoc(doc(db, fareDocPath, dateKey), {
+          ...updated,
+          userId: user.uid,
+          updatedAt: serverTimestamp()
+        }).catch(err => handleFirestoreError(err, OperationType.WRITE, fareDocPath));
+      }
+      
+      return newState;
+    });
+  };
+
+  const { totalThisMonth, avgDaily, chartData, activeDaysCount, forecast } = useMemo(() => {
+    const daysInMonth = eachDayOfInterval({ start: monthStart, end: monthEnd });
+    let total = 0;
+    let activeDays = 0;
+    
+    // First pass to get total and active days correctly
+    daysInMonth.forEach(day => {
+      const dateKey = format(day, 'yyyy-MM-dd');
+      const dayFare = fares[dateKey];
+      const crossedOut = getIsCrossedOut(day, dayFare);
+      if (!crossedOut && dayFare) {
+        const morning = parseFloat(dayFare.morning) || 0;
+        const evening = parseFloat(dayFare.evening) || 0;
+        if (morning + evening > 0) activeDays++;
+        total += (morning + evening) * currentRate;
+      }
+    });
+
+    const avg = activeDays > 0 ? total / activeDays : 0;
+
+    let cumulative = 0;
+    const chart = daysInMonth.map(day => {
+      const dateKey = format(day, 'yyyy-MM-dd');
+      const dayFare = fares[dateKey];
+      const crossedOut = getIsCrossedOut(day, dayFare);
+      let dayTotalGhs = 0;
+      let mParsed = 0;
+      let eParsed = 0;
+      if (!crossedOut && dayFare) {
+        const morning = parseFloat(dayFare.morning) || 0;
+        const evening = parseFloat(dayFare.evening) || 0;
+        mParsed = morning * currentRate;
+        eParsed = evening * currentRate;
+        dayTotalGhs = morning + evening;
+      }
+      const dayTotalSelected = dayTotalGhs * currentRate;
+      cumulative += dayTotalSelected;
+      
+      return {
+        date: format(day, 'd'),
+        total: dayTotalSelected,
+        cumulative: cumulative,
+        average: avg,
+        morningParsed: mParsed,
+        eveningParsed: eParsed
+      };
+    });
+
+    const today = new Date();
+    // Forecast if current month is selected
+    let currentForecast = total;
+    if (isSameMonth(currentDate, today)) {
+        const passedWorkDays = daysInMonth.filter(d => d <= today && !getIsCrossedOut(d, fares[format(d, 'yyyy-MM-dd')])).length;
+        const totalWorkDays = daysInMonth.filter(d => !getIsCrossedOut(d, fares[format(d, 'yyyy-MM-dd')])).length;
+        
+        const avgPerWorkDay = passedWorkDays > 0 ? total / passedWorkDays : 0;
+        currentForecast = total + (totalWorkDays - passedWorkDays) * avgPerWorkDay;
+    }
+
+    return {
+      totalThisMonth: total,
+      avgDaily: avg,
+      chartData: chart,
+      activeDaysCount: activeDays,
+      forecast: currentForecast
+    };
+  }, [fares, monthStart, monthEnd, currentDate, currentRate]);
+
+  const exportToExcel = () => {
+    const daysInMonth = eachDayOfInterval({ start: monthStart, end: monthEnd });
+    
+    const data = daysInMonth.map(day => {
+      const dateKey = format(day, 'yyyy-MM-dd');
+      const dayFare = fares[dateKey] || { morning: '', evening: '' };
+      const crossedOut = getIsCrossedOut(day, dayFare);
+      const m = crossedOut ? 0 : (parseFloat(dayFare.morning) || 0) * currentRate;
+      const e = crossedOut ? 0 : (parseFloat(dayFare.evening) || 0) * currentRate;
+      return {
+        Date: format(day, 'MMM dd, yyyy'),
+        'Day': format(day, 'EEEE'),
+        'Crossed Out': crossedOut ? 'Yes' : 'No',
+        [`Morning Fare (${currentSymbol})`]: m,
+        [`Evening Fare (${currentSymbol})`]: e,
+        [`Total Daily (${currentSymbol})`]: m + e
+      };
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, format(currentDate, 'MMM yyyy'));
+    XLSX.writeFile(workbook, `Transport_Fares_${format(currentDate, 'MMM_yyyy')}.xlsx`);
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans p-4 md:p-8 flex flex-col transition-colors duration-200">
+      <div className="max-w-6xl mx-auto w-full flex-1 flex flex-col h-full">
+
+        {/* Header Section */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-6 gap-4">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-100">Transit Ledger</h1>
+            <p className="text-slate-500 dark:text-slate-400 font-medium">Personal Commute & Expense Tracker</p>
+          </div>
+          <div className="flex items-center gap-3 flex-wrap">
+            {/* Auth Button */}
+            {!authLoading && (
+              <button
+                onClick={user ? handleLogout : handleLogin}
+                className={cn(
+                  "px-3 py-2 rounded-xl shadow-sm flex items-center gap-2 transition-colors text-sm font-semibold relative",
+                  user 
+                    ? "bg-rose-50 text-rose-600 border-rose-200 hover:bg-rose-100 hover:border-rose-300 dark:bg-rose-500/10 dark:border-rose-500/20 dark:hover:bg-rose-500/20"
+                    : "bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100 hover:border-blue-300 dark:bg-blue-500/10 dark:border-blue-500/20 dark:hover:bg-blue-500/20"
+                )}
+                title={user ? "Logout" : "Backup Data (Login)"}
+              >
+                {user ? <LogOut size={16} /> : <LogIn size={16} />}
+                <span className="hidden sm:inline">{user ? "Logout" : "Cloud Backup"}</span>
+                {user && (
+                  <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white dark:border-slate-800" title="Data Synced to Cloud" />
+                )}
+              </button>
+            )}
+
+            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3 py-2 rounded-xl shadow-sm flex items-center gap-2 transition-colors">
+              <select 
+                value={currency} 
+                onChange={e => setCurrency(e.target.value)}
+                className="bg-transparent text-slate-700 dark:text-slate-200 text-sm font-bold outline-none cursor-pointer"
+              >
+                {Object.keys(CURRENCY_SYMBOLS).map(c => (
+                  <option key={c} value={c} className="text-slate-900">{c}</option>
+                ))}
+              </select>
+            </div>
+            
+            <button 
+              onClick={() => setShowSettings(true)}
+              className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-2.5 rounded-xl shadow-sm text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
+              title="Settings & Reminders"
+            >
+              <Settings size={18} />
+            </button>
+
+            <button 
+              onClick={() => setIsDarkMode(prev => !prev)}
+              className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-2.5 rounded-xl shadow-sm text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
+              title="Toggle Dark Mode"
+            >
+              {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+
+            <button 
+              onClick={() => setIsCompactMode(prev => !prev)}
+              className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-2.5 rounded-xl shadow-sm text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
+              title="Toggle Compact Mode"
+            >
+              {isCompactMode ? <Maximize2 size={18} /> : <Minimize2 size={18} />}
+            </button>
+
+            <button 
+              onClick={exportToExcel}
+              className="bg-indigo-600 hover:bg-indigo-700 transition-colors text-white px-5 py-2.5 rounded-xl font-semibold shadow-md shadow-indigo-100 dark:shadow-none flex gap-2 items-center text-sm"
+              title="Export to Excel"
+            >
+              <Download size={16} />
+              <span>Export</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Main Bento Grid */}
+        <div className={cn("flex-1 grid gap-4 overflow-hidden", isCompactMode ? "grid-cols-1" : "grid-cols-1 md:grid-cols-12 grid-rows-none md:grid-rows-6")}>
+          
+          {/* Calendar Card (The Core Tracker) */}
+          <div className={cn("bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm p-4 sm:p-6 flex flex-col transition-colors", isCompactMode ? "col-span-1 min-h-0" : "md:col-span-8 md:row-span-6 overflow-hidden")}>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+              <div className="flex items-center gap-2 sm:gap-4 w-full sm:w-auto">
+                <div className="flex items-center gap-1 sm:gap-3">
+                  <button onClick={handlePrev} className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition">
+                    <ChevronLeft size={20} />
+                  </button>
+                  <h2 className="text-base sm:text-lg font-bold tracking-tight text-slate-900 dark:text-white min-w-[120px] sm:min-w-[140px] text-center">
+                    {view === 'day' ? format(currentDate, 'MMM dd, yyyy') : 
+                     view === 'week' ? `Week of ${format(startOfWeek(currentDate, {weekStartsOn: 1}), 'MMM dd')}` : 
+                     view === 'month' ? format(currentDate, 'MMMM yyyy') : 
+                     format(currentDate, 'yyyy')}
+                  </h2>
+                  <button onClick={handleNext} className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition">
+                    <ChevronRight size={20} />
+                  </button>
+                </div>
+                {isCompactMode && (
+                  <div className="text-sm font-semibold text-indigo-600 dark:text-indigo-400 ml-auto sm:ml-0">
+                    Total: {currentSymbol}{totalThisMonth.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                )}
+              </div>
+
+              {/* View Selector */}
+              <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl w-full sm:w-auto overflow-x-auto no-scrollbar">
+                {[
+                  { id: 'day', label: 'Day' },
+                  { id: 'week', label: 'Week' },
+                  { id: 'month', label: 'Month' },
+                  { id: 'year', label: 'Year' }
+                ].map((v) => (
+                  <button
+                    key={v.id}
+                    onClick={() => setView(v.id as any)}
+                    className={cn(
+                      "flex-1 sm:flex-none px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap",
+                      view === v.id 
+                        ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-white shadow-sm ring-1 ring-slate-200 dark:ring-slate-600" 
+                        : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                    )}
+                  >
+                    {v.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="hidden sm:flex gap-2">
+                <div className="w-3 h-3 rounded-full bg-blue-100 dark:bg-blue-900/50 border border-blue-200 dark:border-blue-800" title="Morning (AM)"></div>
+                <div className="w-3 h-3 rounded-full bg-indigo-100 dark:bg-indigo-900/50 border border-indigo-200 dark:border-indigo-800" title="Evening (PM)"></div>
+              </div>
+            </div>
+            
+            <div className="overflow-x-auto pb-2 -mx-4 px-4 sm:mx-0 sm:px-0 flex-1">
+              {view === 'month' && (
+                <div className="min-w-[550px]">
+                  {/* Calendar Header */}
+                  <div className="grid grid-cols-7 mb-2 border-b border-slate-100 dark:border-slate-800 pb-2 transition-colors">
+                    {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => (
+                      <div key={day} className="text-center text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">{day}</div>
+                    ))}
+                  </div>
+
+                  {/* Calendar Days */}
+                  <div className="grid grid-cols-7 auto-rows-[minmax(84px,1fr)] md:grid-rows-5 flex-1 gap-1.5 sm:gap-2">
+                    {calendarDays.map((day) => {
+                      const dateKey = format(day, 'yyyy-MM-dd');
+                      const dayFare = fares[dateKey] || { morning: '', evening: '' };
+                      const currentMonth = isSameMonth(day, monthStart);
+                      const today = isToday(day);
+                      const isWeekend = day.getDay() === 0 || day.getDay() === 6;
+
+                      return (
+                        <div
+                          key={dateKey}
+                          className={cn(
+                            "border rounded-xl p-1 sm:p-2 flex flex-col justify-between transition-colors relative overflow-hidden",
+                            !currentMonth ? "border-transparent bg-slate-50/50 dark:bg-slate-900/40 opacity-40 grayscale" : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-indigo-300 dark:hover:border-indigo-600 shadow-sm",
+                            today && "border-indigo-400 dark:border-indigo-500 ring-4 ring-indigo-50 dark:ring-indigo-900/20",
+                            getIsCrossedOut(day, dayFare) && "opacity-75 grayscale bg-slate-50/80 dark:bg-slate-900/80"
+                          )}
+                        >
+                          <div className="flex justify-between items-center mb-1">
+                            <span className={cn(
+                              "text-[10px] sm:text-xs font-bold",
+                              today ? "text-indigo-600 dark:text-indigo-400" : (isWeekend && currentMonth ? "text-slate-400 dark:text-slate-500" : "text-slate-600 dark:text-slate-300"),
+                              (!currentMonth || getIsCrossedOut(day, dayFare)) && "text-slate-400 dark:text-slate-600"
+                            )}>
+                              {format(day, 'dd')}{today && <span className="hidden sm:inline"> Today</span>}
+                            </span>
+                            <div className="flex items-center gap-1 z-10">
+                              {isWeekend && currentMonth && !today && (
+                                <span className="hidden lg:block text-[8px] bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 px-1 rounded uppercase font-bold tracking-wider">Wkd</span>
+                              )}
+                              {currentMonth && (
+                                <button
+                                  onClick={() => handleToggleCrossOut(day)}
+                                  className={cn(
+                                    "p-0.5 rounded transition-colors",
+                                    getIsCrossedOut(day, dayFare) ? "text-red-500 hover:text-red-600" : "text-slate-300 hover:text-red-400 dark:text-slate-600 dark:hover:text-red-400"
+                                  )}
+                                  title="Cross out off-days"
+                                >
+                                  <X size={12} strokeWidth={3} />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {currentMonth && (
+                            <div className="space-y-1 mt-auto flex-1 flex flex-col justify-end">
+                              {getIsCrossedOut(day, dayFare) && (
+                                <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                                  <div className="absolute w-[120%] h-[2px] bg-red-400/30 -rotate-[25deg]"></div>
+                                  <span className="text-[10px] sm:text-xs font-black text-red-500/60 dark:text-red-400/60 uppercase tracking-widest bg-white/80 dark:bg-slate-900/80 px-1 py-0.5 rounded backdrop-blur-sm shadow-sm ring-1 ring-red-100 dark:ring-red-900/50 -rotate-[10deg] shadow-sm">
+                                    {hd.isHoliday(day) && (!dayFare || dayFare.crossedOut === undefined) ? 'Holiday' : 'No Work'}
+                                  </span>
+                                </div>
+                              )}
+                              <div className={cn("space-y-1 transition-all", getIsCrossedOut(day, dayFare) ? "opacity-20 pointer-events-none select-none blur-[1px]" : "opacity-100")}>
+                                <div className="group">
+                                  <FareInput 
+                                    valueInGhs={dayFare.morning}
+                                    rate={currentRate}
+                                    onChange={(v) => handleFareChange(day, 'morning', v)}
+                                    placeholder="AM"
+                                    typeContext="morning"
+                                  />
+                                </div>
+                                <div className="group">
+                                  <FareInput 
+                                    valueInGhs={dayFare.evening}
+                                    rate={currentRate}
+                                    onChange={(v) => handleFareChange(day, 'evening', v)}
+                                    placeholder="PM"
+                                    typeContext="evening"
+                                  />
+                                </div>
+                              </div>
+                              {/* Daily Total Line */}
+                              {!dayFare.crossedOut && (parseFloat(dayFare.morning) > 0 || parseFloat(dayFare.evening) > 0) && (
+                                <div className={cn(
+                                  "text-[10px] sm:text-[11px] font-bold text-right pt-1 mt-1 border-t transition-opacity",
+                                  isDarkMode ? "border-slate-800 text-indigo-300" : "border-slate-100 text-indigo-600"
+                                )}>
+                                  {currentSymbol}{(((parseFloat(dayFare.morning) || 0) + (parseFloat(dayFare.evening) || 0)) * currentRate).toFixed(2)}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {view === 'day' && (
+                <div className="flex flex-col items-center justify-center h-full max-w-sm mx-auto space-y-8">
+                  <div className="text-center space-y-2">
+                    <p className="text-sm font-bold uppercase tracking-widest text-indigo-500 dark:text-indigo-400">{format(currentDate, 'EEEE')}</p>
+                    <h3 className="text-3xl font-black text-slate-900 dark:text-white">{format(currentDate, 'MMMM do')}</h3>
+                  </div>
+                  
+                  <div className="w-full space-y-6">
+                    {(() => {
+                      const dateKey = format(currentDate, 'yyyy-MM-dd');
+                      const dayFare = fares[dateKey] || { morning: '', evening: '' };
+                      const crossedOut = getIsCrossedOut(currentDate, dayFare);
+                      
+                      return (
+                        <div className={cn(
+                          "bg-slate-50 dark:bg-slate-800/50 rounded-3xl p-6 border-2 transition-all relative overflow-hidden",
+                          crossedOut ? "border-red-200 dark:border-red-900/30" : "border-slate-100 dark:border-slate-800"
+                        )}>
+                          {crossedOut && (
+                            <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-20">
+                             <div className="absolute w-[120%] h-[4px] bg-red-400/20 -rotate-[15deg]"></div>
+                             <span className="text-xl font-black text-red-500/60 dark:text-red-400/60 uppercase tracking-[0.2em] bg-white/90 dark:bg-slate-900/90 px-4 py-2 rounded-2xl backdrop-blur-md shadow-2xl ring-2 ring-red-100 dark:ring-red-900/50 -rotate-[5deg]">
+                               {hd.isHoliday(currentDate) && (!dayFare || dayFare.crossedOut === undefined) ? 'Holiday' : 'No Work'}
+                             </span>
+                           </div>
+                          )}
+
+                          <div className={cn("space-y-6", crossedOut && "opacity-20 blur-sm pointer-events-none")}>
+                            <div className="space-y-2">
+                              <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2 px-1">
+                                <Sun size={14} className="text-blue-500" /> Morning fare
+                              </label>
+                              <div className="relative">
+                                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-slate-400">{currentSymbol}</span>
+                                <input 
+                                  type="number"
+                                  step="any"
+                                  value={dayFare.morning ? (parseFloat(dayFare.morning) * currentRate).toFixed(2).replace(/\.?0+$/, '') : ''}
+                                  onChange={(e) => {
+                                    const val = e.target.value === '' ? '' : (parseFloat(e.target.value) / currentRate).toString();
+                                    handleFareChange(currentDate, 'morning', val);
+                                  }}
+                                  placeholder="0.00"
+                                  className="w-full pl-12 pr-6 py-4 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-2xl text-2xl font-black text-slate-900 dark:text-white outline-none focus:border-indigo-400 dark:focus:border-indigo-600 transition-all shadow-sm"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="space-y-2">
+                              <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2 px-1">
+                                <Moon size={14} className="text-indigo-500" /> Evening fare
+                              </label>
+                              <div className="relative">
+                                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-slate-400">{currentSymbol}</span>
+                                <input 
+                                  type="number"
+                                  step="any"
+                                  value={dayFare.evening ? (parseFloat(dayFare.evening) * currentRate).toFixed(2).replace(/\.?0+$/, '') : ''}
+                                  onChange={(e) => {
+                                    const val = e.target.value === '' ? '' : (parseFloat(e.target.value) / currentRate).toString();
+                                    handleFareChange(currentDate, 'evening', val);
+                                  }}
+                                  placeholder="0.00"
+                                  className="w-full pl-12 pr-6 py-4 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-2xl text-2xl font-black text-slate-900 dark:text-white outline-none focus:border-indigo-400 dark:focus:border-indigo-600 transition-all shadow-sm"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="pt-4 border-t-2 border-slate-100 dark:border-slate-800 flex justify-between items-center">
+                                <span className="font-bold text-slate-500">Daily Total</span>
+                                <span className="text-3xl font-black text-indigo-600 dark:text-indigo-400">
+                                  {currentSymbol}{(((parseFloat(dayFare.morning) || 0) + (parseFloat(dayFare.evening) || 0)) * currentRate).toFixed(2)}
+                                </span>
+                            </div>
+                          </div>
+                          
+                          <button 
+                            onClick={() => handleToggleCrossOut(currentDate)}
+                            className={cn(
+                              "mt-6 w-full py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2",
+                              crossedOut 
+                                ? "bg-red-500 text-white shadow-lg shadow-red-200 dark:shadow-none" 
+                                : "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600"
+                            )}
+                          >
+                            <X size={16} strokeWidth={3} />
+                            {crossedOut ? "Marked as Off-day" : "Mark as Off-day"}
+                          </button>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
+
+              {view === 'week' && (
+                <div className="flex flex-col gap-4">
+                  {eachDayOfInterval({
+                    start: startOfWeek(currentDate, { weekStartsOn: 1 }),
+                    end: endOfWeek(currentDate, { weekStartsOn: 1 })
+                  }).map(day => {
+                    const dateKey = format(day, 'yyyy-MM-dd');
+                    const dayFare = fares[dateKey] || { morning: '', evening: '' };
+                    const crossedOut = getIsCrossedOut(day, dayFare);
+                    const isFocus = isSameDay(day, currentDate);
+                    const total = ((parseFloat(dayFare.morning) || 0) + (parseFloat(dayFare.evening) || 0)) * currentRate;
+
+                    return (
+                      <div 
+                        key={dateKey}
+                        className={cn(
+                          "group transition-all rounded-2xl border-2 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4",
+                          isFocus ? "border-indigo-400 bg-white dark:bg-slate-800 shadow-md ring-1 ring-indigo-50 dark:ring-indigo-900/20" : "border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 hover:bg-white dark:hover:bg-slate-800 hover:border-slate-200",
+                          crossedOut && "opacity-60 grayscale border-dashed"
+                        )}
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className={cn(
+                            "w-12 h-12 rounded-xl flex flex-col items-center justify-center font-bold transition-colors shadow-sm",
+                            isToday(day) ? "bg-indigo-600 text-white" : "bg-white dark:bg-slate-700 text-slate-500 dark:text-slate-300"
+                          )}>
+                            <span className="text-[10px] uppercase leading-none">{format(day, 'EEE')}</span>
+                            <span className="text-lg leading-tight">{format(day, 'd')}</span>
+                          </div>
+                          <div>
+                            {crossedOut ? (
+                              <span className="text-sm font-bold text-red-500 uppercase tracking-widest flex items-center gap-2">
+                                <X size={14} strokeWidth={3} /> {hd.isHoliday(day) && (!dayFare || dayFare.crossedOut === undefined) ? 'Holiday' : 'No Work'}
+                              </span>
+                            ) : (
+                              <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-6">
+                                <div className="w-24">
+                                  <FareInput 
+                                    valueInGhs={dayFare.morning}
+                                    rate={currentRate}
+                                    onChange={(v) => handleFareChange(day, 'morning', v)}
+                                    placeholder="AM"
+                                    typeContext="morning"
+                                  />
+                                </div>
+                                <div className="w-24">
+                                  <FareInput 
+                                    valueInGhs={dayFare.evening}
+                                    rate={currentRate}
+                                    onChange={(v) => handleFareChange(day, 'evening', v)}
+                                    placeholder="PM"
+                                    typeContext="evening"
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center justify-between sm:justify-end gap-6 sm:w-48 pl-16 sm:pl-0">
+                          <button 
+                            onClick={() => handleToggleCrossOut(day)}
+                            className={cn(
+                              "p-2 rounded-lg transition-colors border shadow-sm",
+                              crossedOut ? "bg-red-500 text-white border-red-500" : "bg-white dark:bg-slate-700 text-slate-300 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-400 border-slate-100 dark:border-slate-600"
+                            )}
+                          >
+                            <X size={16} strokeWidth={3} />
+                          </button>
+                          
+                          <div className="text-right min-w-[100px]">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Day Total</p>
+                            <p className={cn(
+                              "text-xl font-black",
+                              total > 0 ? "text-indigo-600 dark:text-indigo-400" : "text-slate-300 dark:text-slate-700"
+                            )}>
+                              {currentSymbol}{total.toFixed(2)}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {view === 'year' && (
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 pb-4">
+                  {eachMonthOfInterval({
+                    start: startOfYear(currentDate),
+                    end: endOfYear(currentDate)
+                  }).map(month => {
+                    const mStart = startOfMonth(month);
+                    const mEnd = endOfMonth(month);
+                    const mDays = eachDayOfInterval({ start: mStart, end: mEnd });
+                    
+                    let mTotal = 0;
+                    let mActive = 0;
+                    mDays.forEach(day => {
+                      const dateKey = format(day, 'yyyy-MM-dd');
+                      const dayFare = fares[dateKey];
+                      if (dayFare && !getIsCrossedOut(day, dayFare)) {
+                        const m = (parseFloat(dayFare.morning) || 0) + (parseFloat(dayFare.evening) || 0);
+                        if (m > 0) mActive++;
+                        mTotal += m * currentRate;
+                      }
+                    });
+
+                    const isNow = isSameMonth(month, new Date());
+                    const isCur = isSameMonth(month, currentDate);
+
+                    return (
+                      <button
+                        key={month.getTime()}
+                        onClick={() => {
+                          setCurrentDate(month);
+                          setView('month');
+                        }}
+                        className={cn(
+                          "relative group rounded-3xl border-2 p-5 text-left transition-all hover:scale-[1.02] active:scale-[0.98]",
+                          isCur ? "border-indigo-400 bg-white dark:bg-slate-800 shadow-lg ring-1 ring-indigo-50 dark:ring-indigo-900/20" : "border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 hover:bg-white dark:hover:bg-slate-800 hover:border-slate-200 shadow-sm",
+                          mTotal === 0 && !isNow && "opacity-60"
+                        )}
+                      >
+                        {isNow && (
+                          <span className="absolute top-4 right-4 text-[8px] font-black uppercase tracking-[0.2em] bg-indigo-600 text-white px-2 py-0.5 rounded-full shadow-sm z-10">Current</span>
+                        )}
+                        <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">{format(month, 'MMM')}</p>
+                        <h4 className="text-xl font-black text-slate-900 dark:text-white mb-4">{currentSymbol}{mTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h4>
+                        
+                        <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 dark:text-slate-500 border-t border-slate-100 dark:border-slate-700/50 pt-3">
+                          <span>{mActive} days</span>
+                          <span className="group-hover:text-indigo-500 transition-colors uppercase tracking-widest">Detail →</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {!isCompactMode && (
+            <>
+              {/* Summary Stat Card (Bento) */}
+              <div className="md:col-span-4 md:row-span-3 bg-slate-900 dark:bg-slate-950 rounded-3xl p-6 lg:p-8 flex flex-col justify-center text-white relative overflow-hidden shadow-lg transition-colors">
+                <div className="absolute -right-10 -top-10 w-40 h-40 bg-indigo-500 rounded-full opacity-30 blur-3xl pointer-events-none"></div>
+                <div className="absolute -left-10 -bottom-10 w-40 h-40 bg-blue-500 rounded-full opacity-20 blur-3xl pointer-events-none"></div>
+                
+                <span className="text-indigo-300 dark:text-indigo-400 text-sm font-semibold uppercase tracking-widest mb-2 z-10">Month Total Spent</span>
+                <h3 className="text-5xl lg:text-6xl font-black mb-4 z-10 tracking-tight">
+                  {currentSymbol}{totalThisMonth.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </h3>
+                <div className="flex items-center gap-2 z-10">
+                  <p className="text-xs text-slate-400">
+                    {isSameMonth(currentDate, new Date()) ? 'Forecasted end of month:' : 'Final monthly total:'}{' '}
+                    <span className="text-white font-bold">{currentSymbol}{forecast.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </p>
+                </div>
+              </div>
+
+              {/* Average Daily Tracker */}
+              <div className="md:col-span-2 md:row-span-3 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm p-5 lg:p-6 flex flex-col justify-between transition-colors">
+                <div>
+                  <div className="w-10 h-10 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-xl flex items-center justify-center mb-4 transition-colors">
+                    <TrendingUp size={20} strokeWidth={2.5} />
+                  </div>
+                  <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">Daily Avg</p>
+                  <p className="text-2xl lg:text-3xl font-bold tracking-tight text-slate-900 dark:text-white">
+                    {currentSymbol}{avgDaily.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
+                </div>
+                <div className="mt-4">
+                  <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-900/40 px-2 py-1 rounded w-fit uppercase tracking-wide transition-colors">
+                    {activeDaysCount} Days Traveled
+                  </p>
+                </div>
+              </div>
+
+              {/* Monthly Trend Chart */}
+              <div className="md:col-span-2 md:row-span-3 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm p-4 lg:p-6 flex flex-col transition-colors">
+                <div className="mb-2">
+                  <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">Daily Spending Trend</p>
+                </div>
+                <div className="flex-1 w-full min-h-[100px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={chartData} margin={{ top: 10, right: 0, left: 0, bottom: 0 }}>
+                      <Tooltip 
+                        cursor={{fill: isDarkMode ? '#1e293b' : '#f1f5f9'}}
+                        contentStyle={{ 
+                          borderRadius: '12px', 
+                          border: `1px solid ${isDarkMode ? '#334155' : '#e2e8f0'}`, 
+                          backgroundColor: isDarkMode ? '#0f172a' : '#ffffff',
+                          color: isDarkMode ? '#f8fafc' : '#0f172a',
+                          boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', 
+                          fontSize: '12px', 
+                          fontWeight: 'bold' 
+                        }}
+                        formatter={(value: number, name: string) => [`${currentSymbol}${value.toFixed(2)}`, name.charAt(0).toUpperCase() + name.slice(1)]}
+                        labelFormatter={(label) => `Day ${label}`}
+                      />
+                      <Bar 
+                        dataKey="total" 
+                        fill="#6366f1" 
+                        radius={[4, 4, 4, 4]} 
+                        onClick={(data) => {
+                          if (data && data.payload) {
+                            setSelectedChartDay(data.payload);
+                          }
+                        }}
+                        cursor="pointer"
+                      />
+                      <Line type="stepAfter" dataKey="average" stroke="#f43f5e" strokeWidth={2} strokeDasharray="5 5" dot={false} />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </>
+          )}
+
+        </div>
+      </div>
+
+      {/* Selected Chart Day Modal */}
+      {selectedChartDay && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm" onClick={() => setSelectedChartDay(null)}>
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-xl max-w-sm w-full border border-slate-200 dark:border-slate-800" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white">Day {selectedChartDay.date} Summary</h3>
+              <button onClick={() => setSelectedChartDay(null)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div className="flex justify-between items-center p-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl">
+                <div className="flex items-center gap-2 text-blue-700 dark:text-blue-300">
+                  <Sun size={18} /> <span className="font-semibold">Morning</span>
+                </div>
+                <span className="font-bold text-blue-800 dark:text-blue-200">{currentSymbol}{selectedChartDay.morningParsed.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between items-center p-4 bg-indigo-50 dark:bg-indigo-900/20 rounded-xl">
+                <div className="flex items-center gap-2 text-indigo-700 dark:text-indigo-300">
+                  <Moon size={18} /> <span className="font-semibold">Evening</span>
+                </div>
+                <span className="font-bold text-indigo-800 dark:text-indigo-200">{currentSymbol}{selectedChartDay.eveningParsed.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between items-center p-4 border-t border-slate-100 dark:border-slate-800 pt-4 mt-2">
+                <span className="font-bold text-slate-600 dark:text-slate-400">Total</span>
+                <span className="text-2xl font-black text-slate-900 dark:text-white">{currentSymbol}{selectedChartDay.total.toFixed(2)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Settings Modal */}
+      {showSettings && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm" onClick={() => setShowSettings(false)}>
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-xl max-w-sm w-full border border-slate-200 dark:border-slate-800" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Settings size={20} className="text-slate-400" />
+                Settings
+              </h3>
+              <button onClick={() => setShowSettings(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="space-y-6">
+              {/* Reminders Section */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Bell size={18} className={remindersEnabled ? "text-indigo-500" : "text-slate-400"} />
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">Daily Reminders</span>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      className="sr-only peer"
+                      checked={remindersEnabled}
+                      onChange={(e) => {
+                        setRemindersEnabled(e.target.checked);
+                        if (e.target.checked && Notification.permission !== 'granted') {
+                          Notification.requestPermission();
+                        }
+                      }}
+                    />
+                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-slate-600 peer-checked:bg-indigo-500"></div>
+                  </label>
+                </div>
+
+                {remindersEnabled && (
+                  <div className="pl-6 space-y-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-slate-600 dark:text-slate-400">Morning Fare</span>
+                      <input 
+                        type="time" 
+                        value={morningReminderTime}
+                        onChange={e => setMorningReminderTime(e.target.value)}
+                        className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-sm outline-none focus:border-indigo-500 text-slate-700 dark:text-slate-300"
+                      />
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-slate-600 dark:text-slate-400">Evening Fare</span>
+                      <input 
+                        type="time" 
+                        value={eveningReminderTime}
+                        onChange={e => setEveningReminderTime(e.target.value)}
+                        className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-sm outline-none focus:border-indigo-500 text-slate-700 dark:text-slate-300"
+                      />
+                    </div>
+                    <p className="text-xs text-slate-400 mt-2">
+                      Notifications require this tab to remain open in the background.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            <div className="mt-8 pt-4 border-t border-slate-100 dark:border-slate-800">
+              <button 
+                onClick={() => setShowSettings(false)}
+                className="w-full py-2.5 bg-slate-900 dark:bg-indigo-600 text-white rounded-xl font-semibold hover:bg-slate-800 dark:hover:bg-indigo-500 transition-colors"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}
+
+

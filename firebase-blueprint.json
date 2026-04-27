@@ -1,0 +1,59 @@
+{
+  "entities": {
+    "Fare": {
+      "title": "Daily Fare",
+      "description": "A single day's transportation fare data",
+      "type": "object",
+      "properties": {
+        "morning": {
+          "type": "string",
+          "description": "Morning fare amount in chosen currency"
+        },
+        "evening": {
+          "type": "string",
+          "description": "Evening fare amount in chosen currency"
+        },
+        "crossedOut": {
+          "type": "boolean",
+          "description": "Whether the day was marked as no work"
+        },
+        "userId": {
+          "type": "string",
+          "description": "ID of the user who owns the record"
+        },
+        "updatedAt": {
+          "type": "timestamp"
+        }
+      },
+      "required": ["userId"]
+    },
+    "UserPreferences": {
+      "title": "User Preferences",
+      "description": "Settings for a user",
+      "type": "object",
+      "properties": {
+        "currency": {
+          "type": "string"
+        },
+        "userId": {
+          "type": "string"
+        }
+      },
+      "required": ["userId", "currency"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/fares/{fareId}": {
+      "schema": {
+        "$ref": "Fare"
+      },
+      "description": "Stores daily fare records for a user"
+    },
+    "/users/{userId}/settings/preferences": {
+      "schema": {
+        "$ref": "UserPreferences"
+      },
+      "description": "Stores user-specific settings like default currency"
+    }
+  }
+}

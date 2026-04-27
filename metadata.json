@@ -1,0 +1,6 @@
+{
+  "name": "Transport Fare Tracker",
+  "description": "A monthly calendar-based tool to track daily morning and evening transport expenses and calculate monthly totals.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
