@@ -70,6 +70,8 @@ import {
   onSnapshot
 } from './lib/firebase';
 
+import ACCENT_PALETTES from './colors.json';
+
 const hd = new Holidays('GH');
 
 const ACCENT_COLORS = [
@@ -111,16 +113,6 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
   'NGN': '₦',
   'ZAR': 'R'
 };
-
-function getIsCrossedOut(day: Date, dayFare: DayFare | undefined) {
-  if (dayFare && dayFare.crossedOut !== undefined) {
-      return dayFare.crossedOut;
-  }
-  const isWeekend = day.getDay() === 0 || day.getDay() === 6;
-  const isPubHoliday = hd.isHoliday(day) !== false;
-  const hasEnteredFare = dayFare ? (parseFloat(dayFare.morning) > 0 || parseFloat(dayFare.evening) > 0) : false;
-  return (isWeekend || isPubHoliday) && !hasEnteredFare;
-}
 
 function FareInput({ valueInGhs, rate, onChange, placeholder, typeContext }: { valueInGhs: string, rate: number, onChange: (v: string) => void, placeholder: string, typeContext: 'morning' | 'evening' }) {
   const [localVal, setLocalVal] = useState('');
@@ -263,7 +255,36 @@ export default function App() {
   const [accentColor, setAccentColor] = useState(() => localStorage.getItem('accentColor') || 'indigo');
   const [recurringMorning, setRecurringMorning] = useState(() => localStorage.getItem('recurringMorning') || '');
   const [recurringEvening, setRecurringEvening] = useState(() => localStorage.getItem('recurringEvening') || '');
+  const [customHolidays, setCustomHolidays] = useState<{date: string, name: string}[]>(() => {
+    try {
+      const saved = localStorage.getItem('customHolidays');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
   const [showSettings, setShowSettings] = useState(false);
+
+  const getHolidayInfo = useCallback((day: Date) => {
+    const pDate = format(day, 'yyyy-MM-dd');
+    const customMatch = customHolidays.find(h => h.date === pDate);
+    if (customMatch) return { isHoliday: true, name: customMatch.name || 'Custom Off-Day' };
+    
+    const pubHoliday = hd.isHoliday(day);
+    if (pubHoliday !== false && pubHoliday.length > 0) {
+      return { isHoliday: true, name: pubHoliday[0].name };
+    }
+    
+    return { isHoliday: false, name: '' };
+  }, [customHolidays]);
+
+  const getIsCrossedOut = useCallback((day: Date, dayFare: DayFare | undefined) => {
+    if (dayFare && dayFare.crossedOut !== undefined) {
+      return dayFare.crossedOut;
+    }
+    const isWeekend = day.getDay() === 0 || day.getDay() === 6;
+    const pubHolidayInfo = getHolidayInfo(day);
+    const hasEnteredFare = dayFare ? (parseFloat(dayFare.morning) > 0 || parseFloat(dayFare.evening) > 0) : false;
+    return (isWeekend || pubHolidayInfo.isHoliday) && !hasEnteredFare;
+  }, [getHolidayInfo]);
 
   // Sync auth state
   useEffect(() => {
@@ -290,6 +311,7 @@ export default function App() {
         if (data.accentColor) setAccentColor(data.accentColor);
         if (data.recurringMorning !== undefined) setRecurringMorning(data.recurringMorning);
         if (data.recurringEvening !== undefined) setRecurringEvening(data.recurringEvening);
+        if (data.customHolidays) setCustomHolidays(data.customHolidays);
       }
     }, (err) => {
       if (err.message.includes('permission')) {
@@ -374,6 +396,7 @@ export default function App() {
     localStorage.setItem('accentColor', accentColor);
     localStorage.setItem('recurringMorning', recurringMorning);
     localStorage.setItem('recurringEvening', recurringEvening);
+    localStorage.setItem('customHolidays', JSON.stringify(customHolidays));
 
     if (user) {
       const prefsPath = `users/${user.uid}/settings`;
@@ -385,10 +408,11 @@ export default function App() {
         eveningReminderTime,
         accentColor,
         recurringMorning,
-        recurringEvening
+        recurringEvening,
+        customHolidays
       }).catch(err => handleFirestoreError(err, OperationType.WRITE, prefsPath));
     }
-  }, [currency, remindersEnabled, morningReminderTime, eveningReminderTime, accentColor, recurringMorning, recurringEvening, user]);
+  }, [currency, remindersEnabled, morningReminderTime, eveningReminderTime, accentColor, recurringMorning, recurringEvening, customHolidays, user]);
 
   // Save to localStorage whenever fares change
   useEffect(() => {
@@ -410,7 +434,7 @@ export default function App() {
       const dateKey = format(day, 'yyyy-MM-dd');
       const isWeekend = day.getDay() === 0 || day.getDay() === 6;
       
-      if (!newFares[dateKey] && !isWeekend && !hd.isHoliday(day)) {
+      if (!newFares[dateKey] && !isWeekend && !getHolidayInfo(day).isHoliday) {
         newFares[dateKey] = {
            morning: recurringMorning,
            evening: recurringEvening
@@ -649,19 +673,19 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans p-4 md:p-8 flex flex-col transition-colors duration-200">
+    <div className="min-h-screen bg-primary-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans p-4 md:p-8 flex flex-col transition-colors duration-200">
       <style>{`
         :root {
-          --theme-50: var(--color-${accentColor}-50);
-          --theme-100: var(--color-${accentColor}-100);
-          --theme-200: var(--color-${accentColor}-200);
-          --theme-300: var(--color-${accentColor}-300);
-          --theme-400: var(--color-${accentColor}-400);
-          --theme-500: var(--color-${accentColor}-500);
-          --theme-600: var(--color-${accentColor}-600);
-          --theme-700: var(--color-${accentColor}-700);
-          --theme-800: var(--color-${accentColor}-800);
-          --theme-900: var(--color-${accentColor}-900);
+          --theme-50: ${(ACCENT_PALETTES as any)[accentColor]?.['50']};
+          --theme-100: ${(ACCENT_PALETTES as any)[accentColor]?.['100']};
+          --theme-200: ${(ACCENT_PALETTES as any)[accentColor]?.['200']};
+          --theme-300: ${(ACCENT_PALETTES as any)[accentColor]?.['300']};
+          --theme-400: ${(ACCENT_PALETTES as any)[accentColor]?.['400']};
+          --theme-500: ${(ACCENT_PALETTES as any)[accentColor]?.['500']};
+          --theme-600: ${(ACCENT_PALETTES as any)[accentColor]?.['600']};
+          --theme-700: ${(ACCENT_PALETTES as any)[accentColor]?.['700']};
+          --theme-800: ${(ACCENT_PALETTES as any)[accentColor]?.['800']};
+          --theme-900: ${(ACCENT_PALETTES as any)[accentColor]?.['900']};
         }
       `}</style>
       <div className="max-w-6xl mx-auto w-full flex-1 flex flex-col h-full">
@@ -673,41 +697,15 @@ export default function App() {
             <p className="text-slate-500 dark:text-slate-400 font-medium">Personal Commute & Expense Tracker</p>
           </div>
           <div className="flex items-center gap-3 flex-wrap">
-            {/* Auth Button */}
-            {!authLoading && (
-              <button
-                onClick={user ? handleLogout : handleLogin}
-                className={cn(
-                  "px-3 py-2 rounded-xl shadow-sm flex items-center gap-2 transition-colors text-sm font-semibold relative",
-                  user 
-                    ? "bg-rose-50 text-rose-600 border-rose-200 hover:bg-rose-100 hover:border-rose-300 dark:bg-rose-500/10 dark:border-rose-500/20 dark:hover:bg-rose-500/20"
-                    : "bg-secondary-50 text-secondary-600 border-secondary-200 hover:bg-secondary-100 hover:border-secondary-300 dark:bg-secondary-500/10 dark:border-secondary-500/20 dark:hover:bg-secondary-500/20"
-                )}
-                title={user ? "Logout" : "Backup Data (Login)"}
-              >
-                {user ? <LogOut size={16} /> : <LogIn size={16} />}
-                <span className="hidden sm:inline">{user ? "Logout" : "Cloud Backup"}</span>
-                {user && (
-                  <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white dark:border-slate-800" title="Data Synced to Cloud" />
-                )}
-              </button>
-            )}
-
             <button 
               onClick={() => setShowSettings(true)}
-              className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-2.5 rounded-xl shadow-sm text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
+              className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-2.5 rounded-xl shadow-sm text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors relative"
               title="Settings & Reminders"
             >
               <Settings size={18} />
-            </button>
-
-            <button 
-              onClick={exportToExcel}
-              className="bg-primary-600 hover:bg-primary-700 transition-colors text-white px-5 py-2.5 rounded-xl font-semibold shadow-md shadow-primary-100 dark:shadow-none flex gap-2 items-center text-sm"
-              title="Export to Excel"
-            >
-              <Download size={16} />
-              <span>Export</span>
+              {user && (
+                <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white dark:border-slate-800" title="Data Synced to Cloud" />
+              )}
             </button>
           </div>
         </div>
@@ -716,7 +714,7 @@ export default function App() {
         <div className={cn("flex-1 grid gap-4 overflow-hidden", isCompactMode ? "grid-cols-1" : "grid-cols-1 md:grid-cols-12 grid-rows-none md:grid-rows-6")}>
           
           {/* Calendar Card (The Core Tracker) */}
-          <div className={cn("bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm p-4 sm:p-6 flex flex-col transition-colors", isCompactMode ? "col-span-1 min-h-0" : "md:col-span-8 md:row-span-6 overflow-hidden")}>
+          <div className={cn("bg-white dark:bg-slate-900/80 backdrop-blur-sm rounded-3xl border border-primary-100 dark:border-primary-900 shadow-sm p-4 sm:p-6 flex flex-col transition-colors", isCompactMode ? "col-span-1 min-h-0" : "md:col-span-8 md:row-span-6 overflow-hidden")}>
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
               <div className="flex items-center gap-2 sm:gap-4 w-full sm:w-auto">
                 <div className="flex items-center gap-1 sm:gap-3">
@@ -831,7 +829,7 @@ export default function App() {
                                 <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
                                   <div className="absolute w-[120%] h-[2px] bg-red-400/30 -rotate-[25deg]"></div>
                                   <span className="text-[10px] sm:text-xs font-black text-red-500/60 dark:text-red-400/60 uppercase tracking-widest bg-white/80 dark:bg-slate-900/80 px-1 py-0.5 rounded backdrop-blur-sm shadow-sm ring-1 ring-red-100 dark:ring-red-900/50 -rotate-[10deg] shadow-sm">
-                                    {hd.isHoliday(day) && (!dayFare || dayFare.crossedOut === undefined) ? 'Holiday' : 'No Work'}
+                                    {getHolidayInfo(day).isHoliday && (!dayFare || dayFare.crossedOut === undefined) ? getHolidayInfo(day).name || 'Holiday' : 'No Work'}
                                   </span>
                                 </div>
                               )}
@@ -895,7 +893,7 @@ export default function App() {
                             <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-20">
                              <div className="absolute w-[120%] h-[4px] bg-red-400/20 -rotate-[15deg]"></div>
                              <span className="text-xl font-black text-red-500/60 dark:text-red-400/60 uppercase tracking-[0.2em] bg-white/90 dark:bg-slate-900/90 px-4 py-2 rounded-2xl backdrop-blur-md shadow-2xl ring-2 ring-red-100 dark:ring-red-900/50 -rotate-[5deg]">
-                               {hd.isHoliday(currentDate) && (!dayFare || dayFare.crossedOut === undefined) ? 'Holiday' : 'No Work'}
+                               {getHolidayInfo(currentDate).isHoliday && (!dayFare || dayFare.crossedOut === undefined) ? getHolidayInfo(currentDate).name || 'Holiday' : 'No Work'}
                              </span>
                            </div>
                           )}
@@ -1000,7 +998,7 @@ export default function App() {
                           <div>
                             {crossedOut ? (
                               <span className="text-sm font-bold text-red-500 uppercase tracking-widest flex items-center gap-2">
-                                <X size={14} strokeWidth={3} /> {hd.isHoliday(day) && (!dayFare || dayFare.crossedOut === undefined) ? 'Holiday' : 'No Work'}
+                                <X size={14} strokeWidth={3} /> {getHolidayInfo(day).isHoliday && (!dayFare || dayFare.crossedOut === undefined) ? getHolidayInfo(day).name || 'Holiday' : 'No Work'}
                               </span>
                             ) : (
                               <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-6">
@@ -1213,8 +1211,8 @@ export default function App() {
       {/* Settings Modal */}
       {showSettings && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm" onClick={() => setShowSettings(false)}>
-          <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-xl max-w-sm w-full border border-slate-200 dark:border-slate-800" onClick={e => e.stopPropagation()}>
-            <div className="flex justify-between items-center mb-6">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-xl max-w-sm w-full border border-primary-200 dark:border-primary-800 flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-6 shrink-0">
               <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
                 <Settings size={20} className="text-slate-400" />
                 Settings
@@ -1224,7 +1222,7 @@ export default function App() {
               </button>
             </div>
             
-            <div className="space-y-6">
+            <div className="space-y-6 overflow-y-auto flex-1 min-h-0 px-1 -mx-1 pb-4">
               {/* Appearance & Preferences Section */}
               <div className="space-y-4">
                 <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Preferences</h4>
@@ -1314,6 +1312,58 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Custom Holidays Section */}
+              <div className="space-y-4">
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Custom Holidays</h4>
+                <div className="space-y-3 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">
+                  <div className="flex gap-2">
+                    <input 
+                      type="date"
+                      id="newHolidayDate"
+                      className="flex-1 min-w-0 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-primary-500"
+                    />
+                    <input 
+                      type="text"
+                      id="newHolidayName"
+                      placeholder="Name (e.g. Leave)"
+                      className="flex-1 min-w-0 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-primary-500"
+                    />
+                    <button
+                      onClick={() => {
+                        const d = (document.getElementById('newHolidayDate') as HTMLInputElement).value;
+                        const n = (document.getElementById('newHolidayName') as HTMLInputElement).value;
+                        if (d) {
+                          setCustomHolidays(prev => [...prev, { date: d, name: n || 'Off-Day' }]);
+                          (document.getElementById('newHolidayDate') as HTMLInputElement).value = '';
+                          (document.getElementById('newHolidayName') as HTMLInputElement).value = '';
+                        }
+                      }}
+                      className="bg-primary-600 text-white px-3 py-1.5 rounded-lg text-sm font-bold hover:bg-primary-700 transition"
+                    >
+                      Add
+                    </button>
+                  </div>
+                  {customHolidays.length > 0 && (
+                    <div className="space-y-2 mt-4 max-h-32 overflow-y-auto">
+                      {customHolidays.map((h, i) => (
+                        <div key={i} className="flex justify-between items-center text-sm bg-white dark:bg-slate-700 p-2 rounded-lg border border-slate-200 dark:border-slate-600">
+                          <div className="flex gap-2 items-center truncate">
+                            <span className="font-semibold text-slate-700 dark:text-slate-300 shrink-0">{h.date}</span>
+                            <span className="text-slate-500 dark:text-slate-400 truncate">{h.name}</span>
+                          </div>
+                          <button 
+                            onClick={() => setCustomHolidays(prev => prev.filter((_, idx) => idx !== i))}
+                            className="text-red-500 hover:text-red-600 shrink-0"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
               {/* Reminders Section */}
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
@@ -1364,9 +1414,35 @@ export default function App() {
                   </div>
                 )}
               </div>
+
+              {/* Account & Data */}
+              <div className="space-y-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Account & Data</h4>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={user ? handleLogout : handleLogin}
+                    className={cn(
+                      "w-full py-2.5 rounded-xl font-semibold shadow-sm flex justify-center items-center gap-2 transition-colors text-sm",
+                      user 
+                        ? "bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100 dark:bg-rose-500/10 dark:border-rose-500/20 dark:hover:bg-rose-500/20"
+                        : "bg-secondary-50 text-secondary-600 border border-secondary-200 hover:bg-secondary-100 dark:bg-secondary-500/10 dark:border-secondary-500/20 dark:hover:bg-secondary-500/20"
+                    )}
+                  >
+                    {user ? <LogOut size={16} /> : <LogIn size={16} />}
+                    <span className="truncate">{user ? "Logout" : "Cloud Backup"}</span>
+                  </button>
+                  <button 
+                    onClick={exportToExcel}
+                    className="w-full py-2.5 bg-primary-600 hover:bg-primary-700 transition-colors text-white rounded-xl font-semibold shadow-sm flex justify-center items-center gap-2 text-sm"
+                  >
+                    <Download size={16} />
+                    <span className="truncate">Export Data</span>
+                  </button>
+                </div>
+              </div>
             </div>
             
-            <div className="mt-8 pt-4 border-t border-slate-100 dark:border-slate-800">
+            <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 shrink-0">
               <button 
                 onClick={() => setShowSettings(false)}
                 className="w-full py-2.5 bg-slate-900 dark:bg-primary-600 text-white rounded-xl font-semibold hover:bg-slate-800 dark:hover:bg-primary-500 transition-colors"
