@@ -46,13 +46,16 @@ service cloud.firestore {
                  data.currency is string && data.currency.size() <= 10 &&
                  (!('remindersEnabled' in data) || data.remindersEnabled is bool) &&
                  (!('morningReminderTime' in data) || (data.morningReminderTime is string && data.morningReminderTime.size() <= 10)) &&
-                 (!('eveningReminderTime' in data) || (data.eveningReminderTime is string && data.eveningReminderTime.size() <= 10));
+                 (!('eveningReminderTime' in data) || (data.eveningReminderTime is string && data.eveningReminderTime.size() <= 10)) &&
+                 (!('accentColor' in data) || (data.accentColor is string && data.accentColor.size() <= 20)) &&
+                 (!('recurringMorning' in data) || (data.recurringMorning is string && data.recurringMorning.size() <= 20)) &&
+                 (!('recurringEvening' in data) || (data.recurringEvening is string && data.recurringEvening.size() <= 20));
         }
 
         allow get: if isOwner(userId);
         allow create: if isOwner(userId) && isValidSettings(incoming());
         allow update: if isOwner(userId) && isValidSettings(incoming()) && incoming().userId == existing().userId &&
-             incoming().diff(existing()).affectedKeys().hasOnly(['currency', 'remindersEnabled', 'morningReminderTime', 'eveningReminderTime']);
+             incoming().diff(existing()).affectedKeys().hasOnly(['currency', 'remindersEnabled', 'morningReminderTime', 'eveningReminderTime', 'accentColor', 'recurringMorning', 'recurringEvening']);
         allow delete: if isOwner(userId);
       }
     }

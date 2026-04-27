@@ -72,6 +72,19 @@ import {
 
 const hd = new Holidays('GH');
 
+const ACCENT_COLORS = [
+  { name: 'Indigo', id: 'indigo', hex: '#6366f1' },
+  { name: 'Blue', id: 'blue', hex: '#3b82f6' },
+  { name: 'Teal', id: 'teal', hex: '#14b8a6' },
+  { name: 'Emerald', id: 'emerald', hex: '#10b981' },
+  { name: 'Green', id: 'green', hex: '#22c55e' },
+  { name: 'Amber', id: 'amber', hex: '#f59e0b' },
+  { name: 'Orange', id: 'orange', hex: '#f97316' },
+  { name: 'Red', id: 'red', hex: '#ef4444' },
+  { name: 'Rose', id: 'rose', hex: '#f43f5e' },
+  { name: 'Violet', id: 'violet', hex: '#8b5cf6' },
+];
+
 // --- Utility ---
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -150,16 +163,43 @@ function FareInput({ valueInGhs, rate, onChange, placeholder, typeContext }: { v
           "w-full pl-7 pr-2 py-1 sm:py-1.5 text-xs font-medium rounded outline-none transition-all placeholder:text-center sm:placeholder:text-left",
           valueInGhs
             ? typeContext === 'morning'
-              ? "bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 placeholder:text-blue-300 dark:placeholder:text-blue-500 shadow-inner"
-              : "bg-indigo-50 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 placeholder:text-indigo-300 dark:placeholder:text-indigo-500 shadow-inner"
+              ? "bg-secondary-50 dark:bg-secondary-900/40 text-secondary-700 dark:text-secondary-300 placeholder:text-secondary-300 dark:placeholder:text-secondary-500 shadow-inner"
+              : "bg-primary-50 dark:bg-primary-900/40 text-primary-700 dark:text-primary-300 placeholder:text-primary-300 dark:placeholder:text-primary-500 shadow-inner"
             : typeContext === 'morning'
-              ? "bg-transparent border border-dashed border-slate-300/60 dark:border-slate-600 text-slate-600 dark:text-slate-300 placeholder:text-slate-400 dark:placeholder:text-slate-500 group-hover:border-slate-400 dark:group-hover:border-slate-500 focus:border-blue-400 focus:bg-blue-50 dark:focus:bg-blue-900/20 focus:text-blue-700 dark:focus:text-blue-300"
-              : "bg-transparent border border-dashed border-slate-300/60 dark:border-slate-600 text-slate-600 dark:text-slate-300 placeholder:text-slate-400 dark:placeholder:text-slate-500 group-hover:border-slate-400 dark:group-hover:border-slate-500 focus:border-indigo-400 focus:bg-indigo-50 dark:focus:bg-indigo-900/20 focus:text-indigo-700 dark:focus:text-indigo-300"
+              ? "bg-transparent border border-dashed border-slate-300/60 dark:border-slate-600 text-slate-600 dark:text-slate-300 placeholder:text-slate-400 dark:placeholder:text-slate-500 group-hover:border-slate-400 dark:group-hover:border-slate-500 focus:border-secondary-400 focus:bg-secondary-50 dark:focus:bg-secondary-900/20 focus:text-secondary-700 dark:focus:text-secondary-300"
+              : "bg-transparent border border-dashed border-slate-300/60 dark:border-slate-600 text-slate-600 dark:text-slate-300 placeholder:text-slate-400 dark:placeholder:text-slate-500 group-hover:border-slate-400 dark:group-hover:border-slate-500 focus:border-primary-400 focus:bg-primary-50 dark:focus:bg-primary-900/20 focus:text-primary-700 dark:focus:text-primary-300"
         )}
       />
     </div>
   );
 }
+
+const CustomTooltip = ({ active, payload, currentSymbol, currentDate }: any) => {
+  if (active && payload && payload.length) {
+    const data = payload[0].payload;
+    const dateObj = new Date(currentDate.getFullYear(), currentDate.getMonth(), parseInt(data.date));
+    return (
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl rounded-xl p-3 z-50">
+        <p className="font-bold text-slate-800 dark:text-slate-200 pb-2 mb-2 border-b border-slate-100 dark:border-slate-800">
+          {format(dateObj, 'MMM do')}
+        </p>
+        <div className="flex justify-between gap-4 text-sm mb-1">
+          <span className="text-secondary-500 font-medium">Morning</span>
+          <span className="font-bold text-secondary-700 dark:text-secondary-300">{currentSymbol}{(data.morningParsed || 0).toFixed(2)}</span>
+        </div>
+        <div className="flex justify-between gap-4 text-sm mb-1">
+          <span className="text-primary-500 font-medium">Evening</span>
+          <span className="font-bold text-primary-700 dark:text-primary-300">{currentSymbol}{(data.eveningParsed || 0).toFixed(2)}</span>
+        </div>
+        <div className="flex justify-between gap-4 text-sm mt-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+          <span className="font-bold text-slate-500 dark:text-slate-400">Total</span>
+          <span className="font-black text-slate-900 dark:text-white">{currentSymbol}{(data.total || 0).toFixed(2)}</span>
+        </div>
+      </div>
+    );
+  }
+  return null;
+};
 
 export default function App() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -210,7 +250,6 @@ export default function App() {
 
   const [isCompactMode, setIsCompactMode] = useState(false);
   const [view, setView] = useState<'day' | 'week' | 'month' | 'year'>('month');
-  const [selectedChartDay, setSelectedChartDay] = useState<{date: string, morningParsed: number, eveningParsed: number, total: number} | null>(null);
 
   // Auto-detect screen size for default view
   useEffect(() => {
@@ -221,6 +260,9 @@ export default function App() {
   const [remindersEnabled, setRemindersEnabled] = useState(() => localStorage.getItem('remindersEnabled') === 'true');
   const [morningReminderTime, setMorningReminderTime] = useState(() => localStorage.getItem('morningReminderTime') || '08:00');
   const [eveningReminderTime, setEveningReminderTime] = useState(() => localStorage.getItem('eveningReminderTime') || '18:00');
+  const [accentColor, setAccentColor] = useState(() => localStorage.getItem('accentColor') || 'indigo');
+  const [recurringMorning, setRecurringMorning] = useState(() => localStorage.getItem('recurringMorning') || '');
+  const [recurringEvening, setRecurringEvening] = useState(() => localStorage.getItem('recurringEvening') || '');
   const [showSettings, setShowSettings] = useState(false);
 
   // Sync auth state
@@ -245,6 +287,9 @@ export default function App() {
         if (data.remindersEnabled !== undefined) setRemindersEnabled(data.remindersEnabled);
         if (data.morningReminderTime) setMorningReminderTime(data.morningReminderTime);
         if (data.eveningReminderTime) setEveningReminderTime(data.eveningReminderTime);
+        if (data.accentColor) setAccentColor(data.accentColor);
+        if (data.recurringMorning !== undefined) setRecurringMorning(data.recurringMorning);
+        if (data.recurringEvening !== undefined) setRecurringEvening(data.recurringEvening);
       }
     }, (err) => {
       if (err.message.includes('permission')) {
@@ -326,6 +371,10 @@ export default function App() {
     localStorage.setItem('remindersEnabled', String(remindersEnabled));
     localStorage.setItem('morningReminderTime', morningReminderTime);
     localStorage.setItem('eveningReminderTime', eveningReminderTime);
+    localStorage.setItem('accentColor', accentColor);
+    localStorage.setItem('recurringMorning', recurringMorning);
+    localStorage.setItem('recurringEvening', recurringEvening);
+
     if (user) {
       const prefsPath = `users/${user.uid}/settings`;
       setDoc(doc(db, prefsPath, 'preferences'), {
@@ -333,15 +382,47 @@ export default function App() {
         currency,
         remindersEnabled,
         morningReminderTime,
-        eveningReminderTime
+        eveningReminderTime,
+        accentColor,
+        recurringMorning,
+        recurringEvening
       }).catch(err => handleFirestoreError(err, OperationType.WRITE, prefsPath));
     }
-  }, [currency, remindersEnabled, morningReminderTime, eveningReminderTime, user]);
+  }, [currency, remindersEnabled, morningReminderTime, eveningReminderTime, accentColor, recurringMorning, recurringEvening, user]);
 
   // Save to localStorage whenever fares change
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(fares));
   }, [fares]);
+
+  // Auto-populate recurring fares for current view
+  useEffect(() => {
+    if (!recurringMorning && !recurringEvening) return;
+
+    let updated = false;
+    const newFares = { ...fares };
+    const days = eachDayOfInterval({ 
+      start: view === 'year' ? startOfYear(currentDate) : (view === 'month' ? startOfMonth(currentDate) : startOfWeek(currentDate, { weekStartsOn: 1 })), 
+      end: view === 'year' ? endOfYear(currentDate) : (view === 'month' ? endOfMonth(currentDate) : endOfWeek(currentDate, { weekStartsOn: 1 }))
+    });
+
+    days.forEach(day => {
+      const dateKey = format(day, 'yyyy-MM-dd');
+      const isWeekend = day.getDay() === 0 || day.getDay() === 6;
+      
+      if (!newFares[dateKey] && !isWeekend && !hd.isHoliday(day)) {
+        newFares[dateKey] = {
+           morning: recurringMorning,
+           evening: recurringEvening
+        };
+        updated = true;
+      }
+    });
+
+    if (updated) {
+      setFares(newFares);
+    }
+  }, [view, currentDate, recurringMorning, recurringEvening]);
 
   // Handle Notifications
   useEffect(() => {
@@ -569,6 +650,20 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans p-4 md:p-8 flex flex-col transition-colors duration-200">
+      <style>{`
+        :root {
+          --theme-50: var(--color-${accentColor}-50);
+          --theme-100: var(--color-${accentColor}-100);
+          --theme-200: var(--color-${accentColor}-200);
+          --theme-300: var(--color-${accentColor}-300);
+          --theme-400: var(--color-${accentColor}-400);
+          --theme-500: var(--color-${accentColor}-500);
+          --theme-600: var(--color-${accentColor}-600);
+          --theme-700: var(--color-${accentColor}-700);
+          --theme-800: var(--color-${accentColor}-800);
+          --theme-900: var(--color-${accentColor}-900);
+        }
+      `}</style>
       <div className="max-w-6xl mx-auto w-full flex-1 flex flex-col h-full">
 
         {/* Header Section */}
@@ -586,7 +681,7 @@ export default function App() {
                   "px-3 py-2 rounded-xl shadow-sm flex items-center gap-2 transition-colors text-sm font-semibold relative",
                   user 
                     ? "bg-rose-50 text-rose-600 border-rose-200 hover:bg-rose-100 hover:border-rose-300 dark:bg-rose-500/10 dark:border-rose-500/20 dark:hover:bg-rose-500/20"
-                    : "bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100 hover:border-blue-300 dark:bg-blue-500/10 dark:border-blue-500/20 dark:hover:bg-blue-500/20"
+                    : "bg-secondary-50 text-secondary-600 border-secondary-200 hover:bg-secondary-100 hover:border-secondary-300 dark:bg-secondary-500/10 dark:border-secondary-500/20 dark:hover:bg-secondary-500/20"
                 )}
                 title={user ? "Logout" : "Backup Data (Login)"}
               >
@@ -598,18 +693,6 @@ export default function App() {
               </button>
             )}
 
-            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3 py-2 rounded-xl shadow-sm flex items-center gap-2 transition-colors">
-              <select 
-                value={currency} 
-                onChange={e => setCurrency(e.target.value)}
-                className="bg-transparent text-slate-700 dark:text-slate-200 text-sm font-bold outline-none cursor-pointer"
-              >
-                {Object.keys(CURRENCY_SYMBOLS).map(c => (
-                  <option key={c} value={c} className="text-slate-900">{c}</option>
-                ))}
-              </select>
-            </div>
-            
             <button 
               onClick={() => setShowSettings(true)}
               className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-2.5 rounded-xl shadow-sm text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
@@ -619,24 +702,8 @@ export default function App() {
             </button>
 
             <button 
-              onClick={() => setIsDarkMode(prev => !prev)}
-              className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-2.5 rounded-xl shadow-sm text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
-              title="Toggle Dark Mode"
-            >
-              {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
-            </button>
-
-            <button 
-              onClick={() => setIsCompactMode(prev => !prev)}
-              className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-2.5 rounded-xl shadow-sm text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
-              title="Toggle Compact Mode"
-            >
-              {isCompactMode ? <Maximize2 size={18} /> : <Minimize2 size={18} />}
-            </button>
-
-            <button 
               onClick={exportToExcel}
-              className="bg-indigo-600 hover:bg-indigo-700 transition-colors text-white px-5 py-2.5 rounded-xl font-semibold shadow-md shadow-indigo-100 dark:shadow-none flex gap-2 items-center text-sm"
+              className="bg-primary-600 hover:bg-primary-700 transition-colors text-white px-5 py-2.5 rounded-xl font-semibold shadow-md shadow-primary-100 dark:shadow-none flex gap-2 items-center text-sm"
               title="Export to Excel"
             >
               <Download size={16} />
@@ -667,7 +734,7 @@ export default function App() {
                   </button>
                 </div>
                 {isCompactMode && (
-                  <div className="text-sm font-semibold text-indigo-600 dark:text-indigo-400 ml-auto sm:ml-0">
+                  <div className="text-sm font-semibold text-primary-600 dark:text-primary-400 ml-auto sm:ml-0">
                     Total: {currentSymbol}{totalThisMonth.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                 )}
@@ -687,7 +754,7 @@ export default function App() {
                     className={cn(
                       "flex-1 sm:flex-none px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap",
                       view === v.id 
-                        ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-white shadow-sm ring-1 ring-slate-200 dark:ring-slate-600" 
+                        ? "bg-white dark:bg-slate-700 text-primary-600 dark:text-white shadow-sm ring-1 ring-slate-200 dark:ring-slate-600" 
                         : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
                     )}
                   >
@@ -697,8 +764,8 @@ export default function App() {
               </div>
 
               <div className="hidden sm:flex gap-2">
-                <div className="w-3 h-3 rounded-full bg-blue-100 dark:bg-blue-900/50 border border-blue-200 dark:border-blue-800" title="Morning (AM)"></div>
-                <div className="w-3 h-3 rounded-full bg-indigo-100 dark:bg-indigo-900/50 border border-indigo-200 dark:border-indigo-800" title="Evening (PM)"></div>
+                <div className="w-3 h-3 rounded-full bg-secondary-100 dark:bg-secondary-900/50 border border-secondary-200 dark:border-secondary-800" title="Morning (AM)"></div>
+                <div className="w-3 h-3 rounded-full bg-primary-100 dark:bg-primary-900/50 border border-primary-200 dark:border-primary-800" title="Evening (PM)"></div>
               </div>
             </div>
             
@@ -726,15 +793,15 @@ export default function App() {
                           key={dateKey}
                           className={cn(
                             "border rounded-xl p-1 sm:p-2 flex flex-col justify-between transition-colors relative overflow-hidden",
-                            !currentMonth ? "border-transparent bg-slate-50/50 dark:bg-slate-900/40 opacity-40 grayscale" : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-indigo-300 dark:hover:border-indigo-600 shadow-sm",
-                            today && "border-indigo-400 dark:border-indigo-500 ring-4 ring-indigo-50 dark:ring-indigo-900/20",
+                            !currentMonth ? "border-transparent bg-slate-50/50 dark:bg-slate-900/40 opacity-40 grayscale" : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-primary-300 dark:hover:border-primary-600 shadow-sm",
+                            today && "border-primary-400 dark:border-primary-500 ring-4 ring-primary-50 dark:ring-primary-900/20",
                             getIsCrossedOut(day, dayFare) && "opacity-75 grayscale bg-slate-50/80 dark:bg-slate-900/80"
                           )}
                         >
                           <div className="flex justify-between items-center mb-1">
                             <span className={cn(
                               "text-[10px] sm:text-xs font-bold",
-                              today ? "text-indigo-600 dark:text-indigo-400" : (isWeekend && currentMonth ? "text-slate-400 dark:text-slate-500" : "text-slate-600 dark:text-slate-300"),
+                              today ? "text-primary-600 dark:text-primary-400" : (isWeekend && currentMonth ? "text-slate-400 dark:text-slate-500" : "text-slate-600 dark:text-slate-300"),
                               (!currentMonth || getIsCrossedOut(day, dayFare)) && "text-slate-400 dark:text-slate-600"
                             )}>
                               {format(day, 'dd')}{today && <span className="hidden sm:inline"> Today</span>}
@@ -792,7 +859,7 @@ export default function App() {
                               {!dayFare.crossedOut && (parseFloat(dayFare.morning) > 0 || parseFloat(dayFare.evening) > 0) && (
                                 <div className={cn(
                                   "text-[10px] sm:text-[11px] font-bold text-right pt-1 mt-1 border-t transition-opacity",
-                                  isDarkMode ? "border-slate-800 text-indigo-300" : "border-slate-100 text-indigo-600"
+                                  isDarkMode ? "border-slate-800 text-primary-300" : "border-slate-100 text-primary-600"
                                 )}>
                                   {currentSymbol}{(((parseFloat(dayFare.morning) || 0) + (parseFloat(dayFare.evening) || 0)) * currentRate).toFixed(2)}
                                 </div>
@@ -809,7 +876,7 @@ export default function App() {
               {view === 'day' && (
                 <div className="flex flex-col items-center justify-center h-full max-w-sm mx-auto space-y-8">
                   <div className="text-center space-y-2">
-                    <p className="text-sm font-bold uppercase tracking-widest text-indigo-500 dark:text-indigo-400">{format(currentDate, 'EEEE')}</p>
+                    <p className="text-sm font-bold uppercase tracking-widest text-primary-500 dark:text-primary-400">{format(currentDate, 'EEEE')}</p>
                     <h3 className="text-3xl font-black text-slate-900 dark:text-white">{format(currentDate, 'MMMM do')}</h3>
                   </div>
                   
@@ -836,7 +903,7 @@ export default function App() {
                           <div className={cn("space-y-6", crossedOut && "opacity-20 blur-sm pointer-events-none")}>
                             <div className="space-y-2">
                               <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2 px-1">
-                                <Sun size={14} className="text-blue-500" /> Morning fare
+                                <Sun size={14} className="text-secondary-500" /> Morning fare
                               </label>
                               <div className="relative">
                                 <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-slate-400">{currentSymbol}</span>
@@ -849,14 +916,14 @@ export default function App() {
                                     handleFareChange(currentDate, 'morning', val);
                                   }}
                                   placeholder="0.00"
-                                  className="w-full pl-12 pr-6 py-4 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-2xl text-2xl font-black text-slate-900 dark:text-white outline-none focus:border-indigo-400 dark:focus:border-indigo-600 transition-all shadow-sm"
+                                  className="w-full pl-12 pr-6 py-4 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-2xl text-2xl font-black text-slate-900 dark:text-white outline-none focus:border-primary-400 dark:focus:border-primary-600 transition-all shadow-sm"
                                 />
                               </div>
                             </div>
 
                             <div className="space-y-2">
                               <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2 px-1">
-                                <Moon size={14} className="text-indigo-500" /> Evening fare
+                                <Moon size={14} className="text-primary-500" /> Evening fare
                               </label>
                               <div className="relative">
                                 <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-slate-400">{currentSymbol}</span>
@@ -869,14 +936,14 @@ export default function App() {
                                     handleFareChange(currentDate, 'evening', val);
                                   }}
                                   placeholder="0.00"
-                                  className="w-full pl-12 pr-6 py-4 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-2xl text-2xl font-black text-slate-900 dark:text-white outline-none focus:border-indigo-400 dark:focus:border-indigo-600 transition-all shadow-sm"
+                                  className="w-full pl-12 pr-6 py-4 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-2xl text-2xl font-black text-slate-900 dark:text-white outline-none focus:border-primary-400 dark:focus:border-primary-600 transition-all shadow-sm"
                                 />
                               </div>
                             </div>
 
                             <div className="pt-4 border-t-2 border-slate-100 dark:border-slate-800 flex justify-between items-center">
                                 <span className="font-bold text-slate-500">Daily Total</span>
-                                <span className="text-3xl font-black text-indigo-600 dark:text-indigo-400">
+                                <span className="text-3xl font-black text-primary-600 dark:text-primary-400">
                                   {currentSymbol}{(((parseFloat(dayFare.morning) || 0) + (parseFloat(dayFare.evening) || 0)) * currentRate).toFixed(2)}
                                 </span>
                             </div>
@@ -918,14 +985,14 @@ export default function App() {
                         key={dateKey}
                         className={cn(
                           "group transition-all rounded-2xl border-2 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4",
-                          isFocus ? "border-indigo-400 bg-white dark:bg-slate-800 shadow-md ring-1 ring-indigo-50 dark:ring-indigo-900/20" : "border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 hover:bg-white dark:hover:bg-slate-800 hover:border-slate-200",
+                          isFocus ? "border-primary-400 bg-white dark:bg-slate-800 shadow-md ring-1 ring-primary-50 dark:ring-primary-900/20" : "border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 hover:bg-white dark:hover:bg-slate-800 hover:border-slate-200",
                           crossedOut && "opacity-60 grayscale border-dashed"
                         )}
                       >
                         <div className="flex items-center gap-4">
                           <div className={cn(
                             "w-12 h-12 rounded-xl flex flex-col items-center justify-center font-bold transition-colors shadow-sm",
-                            isToday(day) ? "bg-indigo-600 text-white" : "bg-white dark:bg-slate-700 text-slate-500 dark:text-slate-300"
+                            isToday(day) ? "bg-primary-600 text-white" : "bg-white dark:bg-slate-700 text-slate-500 dark:text-slate-300"
                           )}>
                             <span className="text-[10px] uppercase leading-none">{format(day, 'EEE')}</span>
                             <span className="text-lg leading-tight">{format(day, 'd')}</span>
@@ -975,7 +1042,7 @@ export default function App() {
                             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Day Total</p>
                             <p className={cn(
                               "text-xl font-black",
-                              total > 0 ? "text-indigo-600 dark:text-indigo-400" : "text-slate-300 dark:text-slate-700"
+                              total > 0 ? "text-primary-600 dark:text-primary-400" : "text-slate-300 dark:text-slate-700"
                             )}>
                               {currentSymbol}{total.toFixed(2)}
                             </p>
@@ -987,9 +1054,10 @@ export default function App() {
                 </div>
               )}
 
-              {view === 'year' && (
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 pb-4">
-                  {eachMonthOfInterval({
+              {view === 'year' && (() => {
+                  let yearlyTotal = 0;
+                  let yearlyActiveDays = 0;
+                  const monthsData = eachMonthOfInterval({
                     start: startOfYear(currentDate),
                     end: endOfYear(currentDate)
                   }).map(month => {
@@ -1008,38 +1076,64 @@ export default function App() {
                         mTotal += m * currentRate;
                       }
                     });
+                    
+                    yearlyTotal += mTotal;
+                    yearlyActiveDays += mActive;
 
-                    const isNow = isSameMonth(month, new Date());
-                    const isCur = isSameMonth(month, currentDate);
+                    return { month, mTotal, mActive };
+                  });
 
-                    return (
-                      <button
-                        key={month.getTime()}
-                        onClick={() => {
-                          setCurrentDate(month);
-                          setView('month');
-                        }}
-                        className={cn(
-                          "relative group rounded-3xl border-2 p-5 text-left transition-all hover:scale-[1.02] active:scale-[0.98]",
-                          isCur ? "border-indigo-400 bg-white dark:bg-slate-800 shadow-lg ring-1 ring-indigo-50 dark:ring-indigo-900/20" : "border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 hover:bg-white dark:hover:bg-slate-800 hover:border-slate-200 shadow-sm",
-                          mTotal === 0 && !isNow && "opacity-60"
-                        )}
-                      >
-                        {isNow && (
-                          <span className="absolute top-4 right-4 text-[8px] font-black uppercase tracking-[0.2em] bg-indigo-600 text-white px-2 py-0.5 rounded-full shadow-sm z-10">Current</span>
-                        )}
-                        <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">{format(month, 'MMM')}</p>
-                        <h4 className="text-xl font-black text-slate-900 dark:text-white mb-4">{currentSymbol}{mTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h4>
-                        
-                        <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 dark:text-slate-500 border-t border-slate-100 dark:border-slate-700/50 pt-3">
-                          <span>{mActive} days</span>
-                          <span className="group-hover:text-indigo-500 transition-colors uppercase tracking-widest">Detail →</span>
+                  const yearlyAvg = yearlyActiveDays > 0 ? yearlyTotal / yearlyActiveDays : 0;
+
+                  return (
+                    <div className="flex flex-col gap-6 w-full">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="bg-primary-900 border border-primary-800 rounded-3xl p-6 relative overflow-hidden text-white shadow-lg flex flex-col justify-center transition-colors">
+                          <div className="absolute -right-10 -top-10 w-40 h-40 bg-primary-500 rounded-full opacity-30 blur-3xl pointer-events-none"></div>
+                          <span className="text-primary-300 text-xs font-semibold uppercase tracking-widest mb-1 z-10">Year Total Expenses</span>
+                          <h3 className="text-4xl lg:text-5xl font-black mb-1 z-10">{currentSymbol}{yearlyTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
                         </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
+                        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 relative overflow-hidden shadow-sm flex flex-col justify-center transition-colors">
+                           <span className="text-slate-500 text-xs font-semibold uppercase tracking-widest mb-1">Average Daily Spending</span>
+                           <h3 className="text-4xl lg:text-5xl font-black text-slate-900 dark:text-white mb-1">{currentSymbol}{yearlyAvg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+                           <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-2">{yearlyActiveDays} Active Days</span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 pb-4">
+                        {monthsData.map(({ month, mTotal, mActive }) => {
+                          const isNow = isSameMonth(month, new Date());
+                          const isCur = isSameMonth(month, currentDate);
+                          return (
+                            <button
+                              key={month.getTime()}
+                              onClick={() => {
+                                setCurrentDate(month);
+                                setView('month');
+                              }}
+                              className={cn(
+                                "relative group rounded-3xl border-2 p-5 text-left transition-all hover:scale-[1.02] active:scale-[0.98]",
+                                isCur ? "border-primary-400 bg-white dark:bg-slate-800 shadow-lg ring-1 ring-primary-50 dark:ring-primary-900/20" : "border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 hover:bg-white dark:hover:bg-slate-800 hover:border-slate-200 shadow-sm",
+                                mTotal === 0 && !isNow && "opacity-60"
+                              )}
+                            >
+                              {isNow && (
+                                <span className="absolute top-4 right-4 text-[8px] font-black uppercase tracking-[0.2em] bg-primary-600 text-white px-2 py-0.5 rounded-full shadow-sm z-10">Current</span>
+                              )}
+                              <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">{format(month, 'MMM')}</p>
+                              <h4 className="text-xl font-black text-slate-900 dark:text-white mb-4">{currentSymbol}{mTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h4>
+                              
+                              <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 dark:text-slate-500 border-t border-slate-100 dark:border-slate-700/50 pt-3">
+                                <span>{mActive} days</span>
+                                <span className="group-hover:text-primary-500 transition-colors uppercase tracking-widest">Detail →</span>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+              })()}
             </div>
           </div>
 
@@ -1047,10 +1141,10 @@ export default function App() {
             <>
               {/* Summary Stat Card (Bento) */}
               <div className="md:col-span-4 md:row-span-3 bg-slate-900 dark:bg-slate-950 rounded-3xl p-6 lg:p-8 flex flex-col justify-center text-white relative overflow-hidden shadow-lg transition-colors">
-                <div className="absolute -right-10 -top-10 w-40 h-40 bg-indigo-500 rounded-full opacity-30 blur-3xl pointer-events-none"></div>
-                <div className="absolute -left-10 -bottom-10 w-40 h-40 bg-blue-500 rounded-full opacity-20 blur-3xl pointer-events-none"></div>
+                <div className="absolute -right-10 -top-10 w-40 h-40 bg-primary-500 rounded-full opacity-30 blur-3xl pointer-events-none"></div>
+                <div className="absolute -left-10 -bottom-10 w-40 h-40 bg-secondary-500 rounded-full opacity-20 blur-3xl pointer-events-none"></div>
                 
-                <span className="text-indigo-300 dark:text-indigo-400 text-sm font-semibold uppercase tracking-widest mb-2 z-10">Month Total Spent</span>
+                <span className="text-primary-300 dark:text-primary-400 text-sm font-semibold uppercase tracking-widest mb-2 z-10">Month Total Spent</span>
                 <h3 className="text-5xl lg:text-6xl font-black mb-4 z-10 tracking-tight">
                   {currentSymbol}{totalThisMonth.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </h3>
@@ -1090,25 +1184,17 @@ export default function App() {
                     <ComposedChart data={chartData} margin={{ top: 10, right: 0, left: 0, bottom: 0 }}>
                       <Tooltip 
                         cursor={{fill: isDarkMode ? '#1e293b' : '#f1f5f9'}}
-                        contentStyle={{ 
-                          borderRadius: '12px', 
-                          border: `1px solid ${isDarkMode ? '#334155' : '#e2e8f0'}`, 
-                          backgroundColor: isDarkMode ? '#0f172a' : '#ffffff',
-                          color: isDarkMode ? '#f8fafc' : '#0f172a',
-                          boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', 
-                          fontSize: '12px', 
-                          fontWeight: 'bold' 
-                        }}
-                        formatter={(value: number, name: string) => [`${currentSymbol}${value.toFixed(2)}`, name.charAt(0).toUpperCase() + name.slice(1)]}
-                        labelFormatter={(label) => `Day ${label}`}
+                        content={<CustomTooltip currentSymbol={currentSymbol} currentDate={currentDate} />}
                       />
                       <Bar 
                         dataKey="total" 
-                        fill="#6366f1" 
+                        fill="var(--theme-500, var(--color-indigo-500))" 
                         radius={[4, 4, 4, 4]} 
                         onClick={(data) => {
                           if (data && data.payload) {
-                            setSelectedChartDay(data.payload);
+                            const newDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), parseInt(data.payload.date));
+                            setCurrentDate(newDate);
+                            setView('day');
                           }
                         }}
                         cursor="pointer"
@@ -1123,38 +1209,6 @@ export default function App() {
 
         </div>
       </div>
-
-      {/* Selected Chart Day Modal */}
-      {selectedChartDay && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm" onClick={() => setSelectedChartDay(null)}>
-          <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-xl max-w-sm w-full border border-slate-200 dark:border-slate-800" onClick={e => e.stopPropagation()}>
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-lg font-bold text-slate-900 dark:text-white">Day {selectedChartDay.date} Summary</h3>
-              <button onClick={() => setSelectedChartDay(null)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
-                <X size={20} />
-              </button>
-            </div>
-            <div className="space-y-4">
-              <div className="flex justify-between items-center p-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl">
-                <div className="flex items-center gap-2 text-blue-700 dark:text-blue-300">
-                  <Sun size={18} /> <span className="font-semibold">Morning</span>
-                </div>
-                <span className="font-bold text-blue-800 dark:text-blue-200">{currentSymbol}{selectedChartDay.morningParsed.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between items-center p-4 bg-indigo-50 dark:bg-indigo-900/20 rounded-xl">
-                <div className="flex items-center gap-2 text-indigo-700 dark:text-indigo-300">
-                  <Moon size={18} /> <span className="font-semibold">Evening</span>
-                </div>
-                <span className="font-bold text-indigo-800 dark:text-indigo-200">{currentSymbol}{selectedChartDay.eveningParsed.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between items-center p-4 border-t border-slate-100 dark:border-slate-800 pt-4 mt-2">
-                <span className="font-bold text-slate-600 dark:text-slate-400">Total</span>
-                <span className="text-2xl font-black text-slate-900 dark:text-white">{currentSymbol}{selectedChartDay.total.toFixed(2)}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Settings Modal */}
       {showSettings && (
@@ -1171,12 +1225,102 @@ export default function App() {
             </div>
             
             <div className="space-y-6">
+              {/* Appearance & Preferences Section */}
+              <div className="space-y-4">
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Preferences</h4>
+                
+                <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                  <span className="text-sm font-semibold">Theme</span>
+                  <button 
+                    onClick={() => setIsDarkMode(prev => !prev)}
+                    className="p-2 bg-white dark:bg-slate-700 rounded-lg shadow-sm border border-slate-200 dark:border-slate-600 flex gap-2 items-center text-xs font-bold"
+                  >
+                    {isDarkMode ? <><Sun size={14} className="text-primary-400" /> Light</> : <><Moon size={14} className="text-primary-600" /> Dark</>}
+                  </button>
+                </div>
+
+                <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                  <span className="text-sm font-semibold">Compact Mode</span>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" className="sr-only peer" checked={isCompactMode} onChange={e => setIsCompactMode(e.target.checked)} />
+                    <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-slate-600 peer-checked:bg-primary-500"></div>
+                  </label>
+                </div>
+
+                <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                  <span className="text-sm font-semibold">Currency</span>
+                  <select 
+                    value={currency} 
+                    onChange={e => setCurrency(e.target.value)}
+                    className="bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg px-2 py-1 text-sm font-bold outline-none cursor-pointer shadow-sm"
+                  >
+                    {Object.keys(CURRENCY_SYMBOLS).map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Accent Color */}
+              <div className="space-y-3">
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Accent Color</h4>
+                <div className="flex flex-wrap gap-2">
+                  {ACCENT_COLORS.map(c => (
+                    <button
+                      key={c.id}
+                      onClick={() => setAccentColor(c.id)}
+                      className={cn(
+                        "w-6 h-6 rounded-full transition-transform hover:scale-110 shadow-sm",
+                        accentColor === c.id ? "ring-2 ring-offset-2 ring-slate-800 dark:ring-slate-200 dark:ring-offset-slate-900" : ""
+                      )}
+                      style={{ backgroundColor: c.hex }}
+                      title={c.name}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {/* Recurring Fares Section */}
+              <div className="space-y-4">
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Recurring Fares</h4>
+                <div className="space-y-3 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">
+                  <p className="text-xs text-slate-500 mb-2">Auto-fill values for new days</p>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm font-semibold">Morning</span>
+                    <div className="relative w-24">
+                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">{currentSymbol}</span>
+                      <input 
+                        type="number"
+                        value={recurringMorning}
+                        onChange={e => setRecurringMorning(e.target.value)}
+                        placeholder="0.00"
+                        className="w-full pl-6 pr-2 py-1 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-md text-sm outline-none focus:border-primary-500"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm font-semibold">Evening</span>
+                    <div className="relative w-24">
+                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">{currentSymbol}</span>
+                      <input 
+                        type="number"
+                        value={recurringEvening}
+                        onChange={e => setRecurringEvening(e.target.value)}
+                        placeholder="0.00"
+                        className="w-full pl-6 pr-2 py-1 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-md text-sm outline-none focus:border-primary-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               {/* Reminders Section */}
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Bell size={18} className={remindersEnabled ? "text-indigo-500" : "text-slate-400"} />
+                    <Bell size={18} className={remindersEnabled ? "text-primary-500" : "text-slate-400"} />
                     <span className="font-semibold text-slate-800 dark:text-slate-200">Daily Reminders</span>
+
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input 
@@ -1190,7 +1334,7 @@ export default function App() {
                         }
                       }}
                     />
-                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-slate-600 peer-checked:bg-indigo-500"></div>
+                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-slate-600 peer-checked:bg-primary-500"></div>
                   </label>
                 </div>
 
@@ -1202,7 +1346,7 @@ export default function App() {
                         type="time" 
                         value={morningReminderTime}
                         onChange={e => setMorningReminderTime(e.target.value)}
-                        className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-sm outline-none focus:border-indigo-500 text-slate-700 dark:text-slate-300"
+                        className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-sm outline-none focus:border-primary-500 text-slate-700 dark:text-slate-300"
                       />
                     </div>
                     <div className="flex justify-between items-center">
@@ -1211,7 +1355,7 @@ export default function App() {
                         type="time" 
                         value={eveningReminderTime}
                         onChange={e => setEveningReminderTime(e.target.value)}
-                        className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-sm outline-none focus:border-indigo-500 text-slate-700 dark:text-slate-300"
+                        className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-sm outline-none focus:border-primary-500 text-slate-700 dark:text-slate-300"
                       />
                     </div>
                     <p className="text-xs text-slate-400 mt-2">
@@ -1225,7 +1369,7 @@ export default function App() {
             <div className="mt-8 pt-4 border-t border-slate-100 dark:border-slate-800">
               <button 
                 onClick={() => setShowSettings(false)}
-                className="w-full py-2.5 bg-slate-900 dark:bg-indigo-600 text-white rounded-xl font-semibold hover:bg-slate-800 dark:hover:bg-indigo-500 transition-colors"
+                className="w-full py-2.5 bg-slate-900 dark:bg-primary-600 text-white rounded-xl font-semibold hover:bg-slate-800 dark:hover:bg-primary-500 transition-colors"
               >
                 Done
               </button>
