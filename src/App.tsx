@@ -26,7 +26,10 @@ import {
   isToday,
   startOfWeek,
   endOfWeek,
-  isSameMonth
+  isSameMonth,
+  isBefore,
+  isWithinInterval,
+  startOfDay
 } from 'date-fns';
 import { 
   Calendar,
@@ -45,7 +48,9 @@ import {
   Maximize2,
   Minimize2,
   Settings,
-  Bell
+  Bell,
+  User,
+  XSquare
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -262,6 +267,7 @@ export default function App() {
     } catch { return []; }
   });
   const [showSettings, setShowSettings] = useState(false);
+  const [activeSettingsTab, setActiveSettingsTab] = useState<'appearance' | 'reminders' | 'recurring' | 'holidays' | 'account'>('appearance');
 
   const getHolidayInfo = useCallback((day: Date) => {
     const pDate = format(day, 'yyyy-MM-dd');
@@ -419,12 +425,14 @@ export default function App() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(fares));
   }, [fares]);
 
-  // Auto-populate recurring fares for current view
+  // Auto-populate recurring fares (current week only) & mark past empty days as "no work"
   useEffect(() => {
-    if (!recurringMorning && !recurringEvening) return;
-
     let updated = false;
     const newFares = { ...fares };
+    const today = startOfDay(new Date());
+    const weekStart = startOfWeek(today, { weekStartsOn: 1 });
+    const weekEnd = endOfWeek(today, { weekStartsOn: 1 });
+
     const days = eachDayOfInterval({ 
       start: view === 'year' ? startOfYear(currentDate) : (view === 'month' ? startOfMonth(currentDate) : startOfWeek(currentDate, { weekStartsOn: 1 })), 
       end: view === 'year' ? endOfYear(currentDate) : (view === 'month' ? endOfMonth(currentDate) : endOfWeek(currentDate, { weekStartsOn: 1 }))
@@ -433,20 +441,35 @@ export default function App() {
     days.forEach(day => {
       const dateKey = format(day, 'yyyy-MM-dd');
       const isWeekend = day.getDay() === 0 || day.getDay() === 6;
+      const holidayInfo = getHolidayInfo(day);
+      const isPast = isBefore(day, today);
       
-      if (!newFares[dateKey] && !isWeekend && !getHolidayInfo(day).isHoliday) {
-        newFares[dateKey] = {
-           morning: recurringMorning,
-           evening: recurringEvening
-        };
-        updated = true;
+      if (!newFares[dateKey]) {
+        if (isPast) {
+          // Rule 1: Set previous dates with no values to "no work"
+          newFares[dateKey] = {
+            morning: '0',
+            evening: '0',
+            crossedOut: true
+          };
+          updated = true;
+        } else if ((recurringMorning || recurringEvening) && isWithinInterval(day, { start: weekStart, end: weekEnd })) {
+          // Rule 2: Recurring cost only for work days in the CURRENT week
+          if (!isWeekend && !holidayInfo.isHoliday) {
+            newFares[dateKey] = {
+              morning: recurringMorning,
+              evening: recurringEvening
+            };
+            updated = true;
+          }
+        }
       }
     });
 
     if (updated) {
       setFares(newFares);
     }
-  }, [view, currentDate, recurringMorning, recurringEvening]);
+  }, [view, currentDate, recurringMorning, recurringEvening, getHolidayInfo, fares]);
 
   // Handle Notifications
   useEffect(() => {
@@ -1222,224 +1245,287 @@ export default function App() {
               </button>
             </div>
             
+            <div className="flex flex-wrap gap-1 mb-6 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl shrink-0">
+              {[
+                { id: 'appearance', label: 'Look', icon: Sun },
+                { id: 'reminders', label: 'Alerts', icon: Bell },
+                { id: 'recurring', label: 'Defaults', icon: Calendar },
+                { id: 'holidays', label: 'Off-Days', icon: XSquare },
+                { id: 'account', label: 'Account', icon: User }
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveSettingsTab(tab.id as any)}
+                  className={cn(
+                    "flex-1 flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap",
+                    activeSettingsTab === tab.id 
+                      ? "bg-white dark:bg-slate-700 text-primary-600 dark:text-primary-400 shadow-sm" 
+                      : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                  )}
+                >
+                  <tab.icon size={14} />
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
             <div className="space-y-6 overflow-y-auto hide-scrollbar flex-1 min-h-0 px-1 -mx-1 pb-4">
-              {/* Appearance & Preferences Section */}
-              <div className="space-y-4">
-                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Preferences</h4>
-                
-                <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
-                  <span className="text-sm font-semibold">Theme</span>
-                  <button 
-                    onClick={() => setIsDarkMode(prev => !prev)}
-                    className="p-2 bg-white dark:bg-slate-700 rounded-lg shadow-sm border border-slate-200 dark:border-slate-600 flex gap-2 items-center text-xs font-bold"
-                  >
-                    {isDarkMode ? <><Sun size={14} className="text-primary-400" /> Light</> : <><Moon size={14} className="text-primary-600" /> Dark</>}
-                  </button>
-                </div>
+              {activeSettingsTab === 'appearance' && (
+                <div className="space-y-6 motion-preset-fade">
+                  {/* Appearance & Preferences Section */}
+                  <div className="space-y-4">
+                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Preferences</h4>
+                    
+                    <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                      <span className="text-sm font-semibold">Theme</span>
+                      <button 
+                        onClick={() => setIsDarkMode(prev => !prev)}
+                        className="p-2 bg-white dark:bg-slate-700 rounded-lg shadow-sm border border-slate-200 dark:border-slate-600 flex gap-2 items-center text-xs font-bold"
+                      >
+                        {isDarkMode ? <><Sun size={14} className="text-primary-400" /> Light</> : <><Moon size={14} className="text-primary-600" /> Dark</>}
+                      </button>
+                    </div>
 
-                <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
-                  <span className="text-sm font-semibold">Compact Mode</span>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" className="sr-only peer" checked={isCompactMode} onChange={e => setIsCompactMode(e.target.checked)} />
-                    <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-slate-600 peer-checked:bg-primary-500"></div>
-                  </label>
-                </div>
+                    <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                      <span className="text-sm font-semibold">Compact Mode</span>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" className="sr-only peer" checked={isCompactMode} onChange={e => setIsCompactMode(e.target.checked)} />
+                        <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-slate-600 peer-checked:bg-primary-500"></div>
+                      </label>
+                    </div>
 
-                <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
-                  <span className="text-sm font-semibold">Currency</span>
-                  <select 
-                    value={currency} 
-                    onChange={e => setCurrency(e.target.value)}
-                    className="bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg px-2 py-1 text-sm font-bold outline-none cursor-pointer shadow-sm"
-                  >
-                    {Object.keys(CURRENCY_SYMBOLS).map(c => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Accent Color */}
-              <div className="space-y-3">
-                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Accent Color</h4>
-                <div className="flex flex-wrap gap-2">
-                  {ACCENT_COLORS.map(c => (
-                    <button
-                      key={c.id}
-                      onClick={() => setAccentColor(c.id)}
-                      className={cn(
-                        "w-6 h-6 rounded-full transition-transform hover:scale-110 shadow-sm",
-                        accentColor === c.id ? "ring-2 ring-offset-2 ring-slate-800 dark:ring-slate-200 dark:ring-offset-slate-900" : ""
-                      )}
-                      style={{ backgroundColor: c.hex }}
-                      title={c.name}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              {/* Recurring Fares Section */}
-              <div className="space-y-4">
-                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Recurring Fares</h4>
-                <div className="space-y-3 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">
-                  <p className="text-xs text-slate-500 mb-2">Auto-fill values for new days</p>
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm font-semibold">Morning</span>
-                    <div className="relative w-24">
-                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">{currentSymbol}</span>
-                      <input 
-                        type="number"
-                        value={recurringMorning}
-                        onChange={e => setRecurringMorning(e.target.value)}
-                        placeholder="0.00"
-                        className="w-full pl-6 pr-2 py-1 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-md text-sm outline-none focus:border-primary-500"
-                      />
+                    <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                      <span className="text-sm font-semibold">Currency</span>
+                      <select 
+                        value={currency} 
+                        onChange={e => setCurrency(e.target.value)}
+                        className="bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg px-2 py-1 text-sm font-bold outline-none cursor-pointer shadow-sm"
+                      >
+                        {Object.keys(CURRENCY_SYMBOLS).map(c => (
+                          <option key={c} value={c}>{c}</option>
+                        ))}
+                      </select>
                     </div>
                   </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm font-semibold">Evening</span>
-                    <div className="relative w-24">
-                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">{currentSymbol}</span>
-                      <input 
-                        type="number"
-                        value={recurringEvening}
-                        onChange={e => setRecurringEvening(e.target.value)}
-                        placeholder="0.00"
-                        className="w-full pl-6 pr-2 py-1 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-md text-sm outline-none focus:border-primary-500"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
 
-              {/* Custom Holidays Section */}
-              <div className="space-y-4">
-                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Custom Holidays</h4>
-                <div className="space-y-3 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">
-                  <div className="flex gap-2">
-                    <input 
-                      type="date"
-                      id="newHolidayDate"
-                      className="flex-1 min-w-0 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-primary-500"
-                    />
-                    <input 
-                      type="text"
-                      id="newHolidayName"
-                      placeholder="Name (e.g. Leave)"
-                      className="flex-1 min-w-0 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-primary-500"
-                    />
-                    <button
-                      onClick={() => {
-                        const d = (document.getElementById('newHolidayDate') as HTMLInputElement).value;
-                        const n = (document.getElementById('newHolidayName') as HTMLInputElement).value;
-                        if (d) {
-                          setCustomHolidays(prev => [...prev, { date: d, name: n || 'Off-Day' }]);
-                          (document.getElementById('newHolidayDate') as HTMLInputElement).value = '';
-                          (document.getElementById('newHolidayName') as HTMLInputElement).value = '';
-                        }
-                      }}
-                      className="bg-primary-600 text-white px-3 py-1.5 rounded-lg text-sm font-bold hover:bg-primary-700 transition"
-                    >
-                      Add
-                    </button>
-                  </div>
-                  {customHolidays.length > 0 && (
-                    <div className="space-y-2 mt-4 max-h-32 overflow-y-auto">
-                      {customHolidays.map((h, i) => (
-                        <div key={i} className="flex justify-between items-center text-sm bg-white dark:bg-slate-700 p-2 rounded-lg border border-slate-200 dark:border-slate-600">
-                          <div className="flex gap-2 items-center truncate">
-                            <span className="font-semibold text-slate-700 dark:text-slate-300 shrink-0">{h.date}</span>
-                            <span className="text-slate-500 dark:text-slate-400 truncate">{h.name}</span>
-                          </div>
-                          <button 
-                            onClick={() => setCustomHolidays(prev => prev.filter((_, idx) => idx !== i))}
-                            className="text-red-500 hover:text-red-600 shrink-0"
-                          >
-                            <X size={14} />
-                          </button>
-                        </div>
+                  {/* Accent Color */}
+                  <div className="space-y-3">
+                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Accent Color</h4>
+                    <div className="flex flex-wrap gap-2">
+                      {ACCENT_COLORS.map(c => (
+                        <button
+                          key={c.id}
+                          onClick={() => setAccentColor(c.id)}
+                          className={cn(
+                            "w-6 h-6 rounded-full transition-transform hover:scale-110 shadow-sm",
+                            accentColor === c.id ? "ring-2 ring-offset-2 ring-slate-800 dark:ring-slate-200 dark:ring-offset-slate-900" : ""
+                          )}
+                          style={{ backgroundColor: c.hex }}
+                          title={c.name}
+                        />
                       ))}
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {activeSettingsTab === 'recurring' && (
+                <div className="space-y-4 motion-preset-fade">
+                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Recurring Fares</h4>
+                  <div className="space-y-3 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">
+                    <p className="text-xs text-slate-500 mb-2">Auto-fill values for work days in current week.</p>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-semibold">Morning</span>
+                      <div className="relative w-24">
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">{currentSymbol}</span>
+                        <input 
+                          type="number"
+                          value={recurringMorning}
+                          onChange={e => setRecurringMorning(e.target.value)}
+                          placeholder="0.00"
+                          className="w-full pl-6 pr-2 py-1 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-md text-sm outline-none focus:border-primary-500"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-semibold">Evening</span>
+                      <div className="relative w-24">
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">{currentSymbol}</span>
+                        <input 
+                          type="number"
+                          value={recurringEvening}
+                          onChange={e => setRecurringEvening(e.target.value)}
+                          placeholder="0.00"
+                          className="w-full pl-6 pr-2 py-1 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-md text-sm outline-none focus:border-primary-500"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activeSettingsTab === 'holidays' && (
+                <div className="space-y-4 motion-preset-fade">
+                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Custom Holidays</h4>
+                  <div className="space-y-3 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">
+                    <div className="flex gap-2">
+                      <input 
+                        type="date"
+                        id="newHolidayDate"
+                        className="flex-1 min-w-0 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-primary-500"
+                      />
+                      <input 
+                        type="text"
+                        id="newHolidayName"
+                        placeholder="Name (e.g. Leave)"
+                        className="flex-1 min-w-0 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-primary-500"
+                      />
+                      <button
+                        onClick={() => {
+                          const d = (document.getElementById('newHolidayDate') as HTMLInputElement).value;
+                          const n = (document.getElementById('newHolidayName') as HTMLInputElement).value;
+                          if (d) {
+                            setCustomHolidays(prev => [...prev, { date: d, name: n || 'Off-Day' }]);
+                            (document.getElementById('newHolidayDate') as HTMLInputElement).value = '';
+                            (document.getElementById('newHolidayName') as HTMLInputElement).value = '';
+                          }
+                        }}
+                        className="bg-primary-600 text-white px-3 py-1.5 rounded-lg text-sm font-bold hover:bg-primary-700 transition"
+                      >
+                        Add
+                      </button>
+                    </div>
+                    {customHolidays.length > 0 ? (
+                      <div className="space-y-2 mt-4 max-h-32 overflow-y-auto">
+                        {customHolidays.map((h, i) => (
+                          <div key={i} className="flex justify-between items-center text-sm bg-white dark:bg-slate-700 p-2 rounded-lg border border-slate-200 dark:border-slate-600">
+                            <div className="flex gap-2 items-center truncate">
+                              <span className="font-semibold text-slate-700 dark:text-slate-300 shrink-0">{h.date}</span>
+                              <span className="text-slate-500 dark:text-slate-400 truncate">{h.name}</span>
+                            </div>
+                            <button 
+                              onClick={() => setCustomHolidays(prev => prev.filter((_, idx) => idx !== i))}
+                              className="text-red-500 hover:text-red-600 shrink-0"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-center text-slate-400 py-4 italic">No custom holidays added yet.</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {activeSettingsTab === 'reminders' && (
+                <div className="space-y-4 motion-preset-fade">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Bell size={18} className={remindersEnabled ? "text-primary-500" : "text-slate-400"} />
+                      <span className="font-semibold text-slate-800 dark:text-slate-200">Daily Reminders</span>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        className="sr-only peer"
+                        checked={remindersEnabled}
+                        onChange={(e) => {
+                          setRemindersEnabled(e.target.checked);
+                          if (e.target.checked && Notification.permission !== 'granted') {
+                            Notification.requestPermission();
+                          }
+                        }}
+                      />
+                      <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-slate-600 peer-checked:bg-primary-500"></div>
+                    </label>
+                  </div>
+
+                  {remindersEnabled && (
+                    <div className="pl-6 space-y-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-slate-600 dark:text-slate-400">Morning Fare</span>
+                        <input 
+                          type="time" 
+                          value={morningReminderTime}
+                          onChange={e => setMorningReminderTime(e.target.value)}
+                          className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-sm outline-none focus:border-primary-500 text-slate-700 dark:text-slate-300"
+                        />
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-slate-600 dark:text-slate-400">Evening Fare</span>
+                        <input 
+                          type="time" 
+                          value={eveningReminderTime}
+                          onChange={e => setEveningReminderTime(e.target.value)}
+                          className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-sm outline-none focus:border-primary-500 text-slate-700 dark:text-slate-300"
+                        />
+                      </div>
+                      <p className="text-xs text-slate-400 mt-2">
+                        Notifications require this tab to remain open in the background.
+                      </p>
+                    </div>
+                  )}
+                  {!remindersEnabled && (
+                    <p className="text-sm text-slate-500 italic text-center py-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl">
+                      Turn on reminders to get notified when it's time to log your fares.
+                    </p>
                   )}
                 </div>
-              </div>
+              )}
 
-              {/* Reminders Section */}
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Bell size={18} className={remindersEnabled ? "text-primary-500" : "text-slate-400"} />
-                    <span className="font-semibold text-slate-800 dark:text-slate-200">Daily Reminders</span>
-
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input 
-                      type="checkbox" 
-                      className="sr-only peer"
-                      checked={remindersEnabled}
-                      onChange={(e) => {
-                        setRemindersEnabled(e.target.checked);
-                        if (e.target.checked && Notification.permission !== 'granted') {
-                          Notification.requestPermission();
-                        }
-                      }}
-                    />
-                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-slate-600 peer-checked:bg-primary-500"></div>
-                  </label>
-                </div>
-
-                {remindersEnabled && (
-                  <div className="pl-6 space-y-3">
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-slate-600 dark:text-slate-400">Morning Fare</span>
-                      <input 
-                        type="time" 
-                        value={morningReminderTime}
-                        onChange={e => setMorningReminderTime(e.target.value)}
-                        className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-sm outline-none focus:border-primary-500 text-slate-700 dark:text-slate-300"
-                      />
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-slate-600 dark:text-slate-400">Evening Fare</span>
-                      <input 
-                        type="time" 
-                        value={eveningReminderTime}
-                        onChange={e => setEveningReminderTime(e.target.value)}
-                        className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-sm outline-none focus:border-primary-500 text-slate-700 dark:text-slate-300"
-                      />
-                    </div>
-                    <p className="text-xs text-slate-400 mt-2">
-                      Notifications require this tab to remain open in the background.
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* Account & Data */}
-              <div className="space-y-4 pt-4 border-t border-slate-100 dark:border-slate-800">
-                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Account & Data</h4>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    onClick={user ? handleLogout : handleLogin}
-                    className={cn(
-                      "w-full py-2.5 rounded-xl font-semibold shadow-sm flex justify-center items-center gap-2 transition-colors text-sm",
-                      user 
-                        ? "bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100 dark:bg-rose-500/10 dark:border-rose-500/20 dark:hover:bg-rose-500/20"
-                        : "bg-secondary-50 text-secondary-600 border border-secondary-200 hover:bg-secondary-100 dark:bg-secondary-500/10 dark:border-secondary-500/20 dark:hover:bg-secondary-500/20"
+              {activeSettingsTab === 'account' && (
+                <div className="space-y-6 motion-preset-fade">
+                  <div className="space-y-4">
+                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Account & Data</h4>
+                    {user ? (
+                      <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-800">
+                        <div className="flex items-center gap-3 mb-4">
+                          {user.photoURL ? (
+                            <img src={user.photoURL} alt={user.displayName} className="w-10 h-10 rounded-full border border-slate-200" />
+                          ) : (
+                            <div className="w-10 h-10 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center text-primary-600 dark:text-primary-400 font-bold">
+                              {user.displayName?.charAt(0) || 'U'}
+                            </div>
+                          )}
+                          <div>
+                            <p className="text-sm font-bold text-slate-900 dark:text-white">{user.displayName || 'User'}</p>
+                            <p className="text-xs text-slate-500 truncate max-w-[200px]">{user.email}</p>
+                          </div>
+                        </div>
+                        <p className="text-xs text-slate-500 mb-4">Your data is automatically synced to the cloud.</p>
+                      </div>
+                    ) : (
+                      <div className="bg-primary-50 dark:bg-primary-900/10 p-4 rounded-xl border border-primary-100 dark:border-primary-900/20">
+                        <p className="text-sm text-primary-700 dark:text-primary-300 font-medium mb-3">Sync your data across devices</p>
+                        <p className="text-xs text-primary-600/80 dark:text-primary-400/70 mb-4">Log in to safely backup your commute history and access it from anywhere.</p>
+                      </div>
                     )}
-                  >
-                    {user ? <LogOut size={16} /> : <LogIn size={16} />}
-                    <span className="truncate">{user ? "Logout" : "Cloud Backup"}</span>
-                  </button>
-                  <button 
-                    onClick={exportToExcel}
-                    className="w-full py-2.5 bg-primary-600 hover:bg-primary-700 transition-colors text-white rounded-xl font-semibold shadow-sm flex justify-center items-center gap-2 text-sm"
-                  >
-                    <Download size={16} />
-                    <span className="truncate">Export Data</span>
-                  </button>
+                    <div className="grid grid-cols-1 gap-3">
+                      <button
+                        onClick={user ? handleLogout : handleLogin}
+                        className={cn(
+                          "w-full py-3 rounded-xl font-bold shadow-sm flex justify-center items-center gap-2 transition-colors text-sm",
+                          user 
+                            ? "bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100 dark:bg-rose-500/10 dark:border-rose-500/20 dark:hover:bg-rose-500/20"
+                            : "bg-primary-600 text-white hover:bg-primary-700 shadow-md shadow-primary-200 dark:shadow-none"
+                        )}
+                      >
+                        {user ? <LogOut size={16} /> : <LogIn size={16} />}
+                        <span>{user ? "Logout" : "Log in with Google"}</span>
+                      </button>
+                      <button 
+                        onClick={exportToExcel}
+                        className="w-full py-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-bold transition-all hover:bg-slate-50 dark:hover:bg-slate-700 flex justify-center items-center gap-2 text-sm"
+                      >
+                        <Download size={16} />
+                        <span>Export CSV / Excel</span>
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
             
             <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 shrink-0">
