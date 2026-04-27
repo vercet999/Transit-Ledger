@@ -49,8 +49,7 @@ import {
   Minimize2,
   Settings,
   Bell,
-  User,
-  XSquare
+  User
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -260,27 +259,17 @@ export default function App() {
   const [accentColor, setAccentColor] = useState(() => localStorage.getItem('accentColor') || 'indigo');
   const [recurringMorning, setRecurringMorning] = useState(() => localStorage.getItem('recurringMorning') || '');
   const [recurringEvening, setRecurringEvening] = useState(() => localStorage.getItem('recurringEvening') || '');
-  const [customHolidays, setCustomHolidays] = useState<{date: string, name: string}[]>(() => {
-    try {
-      const saved = localStorage.getItem('customHolidays');
-      return saved ? JSON.parse(saved) : [];
-    } catch { return []; }
-  });
   const [showSettings, setShowSettings] = useState(false);
-  const [activeSettingsTab, setActiveSettingsTab] = useState<'appearance' | 'reminders' | 'recurring' | 'holidays' | 'account'>('appearance');
+  const [activeSettingsTab, setActiveSettingsTab] = useState<'appearance' | 'reminders' | 'recurring' | 'account'>('appearance');
 
   const getHolidayInfo = useCallback((day: Date) => {
-    const pDate = format(day, 'yyyy-MM-dd');
-    const customMatch = customHolidays.find(h => h.date === pDate);
-    if (customMatch) return { isHoliday: true, name: customMatch.name || 'Custom Off-Day' };
-    
     const pubHoliday = hd.isHoliday(day);
     if (pubHoliday !== false && pubHoliday.length > 0) {
       return { isHoliday: true, name: pubHoliday[0].name };
     }
     
     return { isHoliday: false, name: '' };
-  }, [customHolidays]);
+  }, []);
 
   const getIsCrossedOut = useCallback((day: Date, dayFare: DayFare | undefined) => {
     if (dayFare && dayFare.crossedOut !== undefined) {
@@ -317,7 +306,6 @@ export default function App() {
         if (data.accentColor) setAccentColor(data.accentColor);
         if (data.recurringMorning !== undefined) setRecurringMorning(data.recurringMorning);
         if (data.recurringEvening !== undefined) setRecurringEvening(data.recurringEvening);
-        if (data.customHolidays) setCustomHolidays(data.customHolidays);
       }
     }, (err) => {
       if (err.message.includes('permission')) {
@@ -402,7 +390,6 @@ export default function App() {
     localStorage.setItem('accentColor', accentColor);
     localStorage.setItem('recurringMorning', recurringMorning);
     localStorage.setItem('recurringEvening', recurringEvening);
-    localStorage.setItem('customHolidays', JSON.stringify(customHolidays));
 
     if (user) {
       const prefsPath = `users/${user.uid}/settings`;
@@ -414,11 +401,10 @@ export default function App() {
         eveningReminderTime,
         accentColor,
         recurringMorning,
-        recurringEvening,
-        customHolidays
+        recurringEvening
       }).catch(err => handleFirestoreError(err, OperationType.WRITE, prefsPath));
     }
-  }, [currency, remindersEnabled, morningReminderTime, eveningReminderTime, accentColor, recurringMorning, recurringEvening, customHolidays, user]);
+  }, [currency, remindersEnabled, morningReminderTime, eveningReminderTime, accentColor, recurringMorning, recurringEvening, user]);
 
   // Save to localStorage whenever fares change
   useEffect(() => {
@@ -1250,7 +1236,6 @@ export default function App() {
                 { id: 'appearance', label: 'Look', icon: Sun },
                 { id: 'reminders', label: 'Alerts', icon: Bell },
                 { id: 'recurring', label: 'Defaults', icon: Calendar },
-                { id: 'holidays', label: 'Off-Days', icon: XSquare },
                 { id: 'account', label: 'Account', icon: User }
               ].map(tab => (
                 <button
@@ -1360,61 +1345,6 @@ export default function App() {
                         />
                       </div>
                     </div>
-                  </div>
-                </div>
-              )}
-
-              {activeSettingsTab === 'holidays' && (
-                <div className="space-y-4 motion-preset-fade">
-                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Custom Holidays</h4>
-                  <div className="space-y-3 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">
-                    <div className="flex gap-2">
-                      <input 
-                        type="date"
-                        id="newHolidayDate"
-                        className="flex-1 min-w-0 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-primary-500"
-                      />
-                      <input 
-                        type="text"
-                        id="newHolidayName"
-                        placeholder="Name (e.g. Leave)"
-                        className="flex-1 min-w-0 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-primary-500"
-                      />
-                      <button
-                        onClick={() => {
-                          const d = (document.getElementById('newHolidayDate') as HTMLInputElement).value;
-                          const n = (document.getElementById('newHolidayName') as HTMLInputElement).value;
-                          if (d) {
-                            setCustomHolidays(prev => [...prev, { date: d, name: n || 'Off-Day' }]);
-                            (document.getElementById('newHolidayDate') as HTMLInputElement).value = '';
-                            (document.getElementById('newHolidayName') as HTMLInputElement).value = '';
-                          }
-                        }}
-                        className="bg-primary-600 text-white px-3 py-1.5 rounded-lg text-sm font-bold hover:bg-primary-700 transition"
-                      >
-                        Add
-                      </button>
-                    </div>
-                    {customHolidays.length > 0 ? (
-                      <div className="space-y-2 mt-4 max-h-32 overflow-y-auto">
-                        {customHolidays.map((h, i) => (
-                          <div key={i} className="flex justify-between items-center text-sm bg-white dark:bg-slate-700 p-2 rounded-lg border border-slate-200 dark:border-slate-600">
-                            <div className="flex gap-2 items-center truncate">
-                              <span className="font-semibold text-slate-700 dark:text-slate-300 shrink-0">{h.date}</span>
-                              <span className="text-slate-500 dark:text-slate-400 truncate">{h.name}</span>
-                            </div>
-                            <button 
-                              onClick={() => setCustomHolidays(prev => prev.filter((_, idx) => idx !== i))}
-                              className="text-red-500 hover:text-red-600 shrink-0"
-                            >
-                              <X size={14} />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-center text-slate-400 py-4 italic">No custom holidays added yet.</p>
-                    )}
                   </div>
                 </div>
               )}
