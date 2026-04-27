@@ -357,11 +357,9 @@ export default function App() {
 
   const handleLogin = async () => {
     try {
-      const result = await signInWithPopup(auth, googleProvider);
-      if (result.user && Object.keys(fares).length > 0) {
-        // Automatically sync existing local data to the new user account
-        await syncLocalDataToCloud(result.user.uid, fares);
-      }
+      await signInWithPopup(auth, googleProvider);
+      // No longer automatically syncing local data to cloud on login
+      // Local data will be merged with cloud data via the onSnapshot listener
     } catch (err: any) {
       console.error("Login failed", err);
       if (err.code === 'auth/unauthorized-domain') {
@@ -1428,8 +1426,8 @@ export default function App() {
                       </div>
                     ) : (
                       <div className="bg-primary-50 dark:bg-primary-900/10 p-4 rounded-xl border border-primary-100 dark:border-primary-900/20">
-                        <p className="text-sm text-primary-700 dark:text-primary-300 font-medium mb-3">Sync your data across devices</p>
-                        <p className="text-xs text-primary-600/80 dark:text-primary-400/70 mb-4">Log in to safely backup your commute history and access it from anywhere.</p>
+                        <p className="text-sm text-primary-700 dark:text-primary-300 font-medium mb-3">Login to sync your data</p>
+                        <p className="text-xs text-primary-600/80 dark:text-primary-400/70 mb-4">Pull your saved commute history and keep it synced across all your devices.</p>
                       </div>
                     )}
                     <div className="grid grid-cols-1 gap-3">
