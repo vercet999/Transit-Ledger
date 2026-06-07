@@ -17,6 +17,26 @@
           "type": "boolean",
           "description": "Whether the day was marked as no work"
         },
+        "isWorkTrip": {
+          "type": "boolean",
+          "description": "Whether the day was a work trip"
+        },
+        "wtAccommodation": {
+          "type": "string",
+          "description": "Accommodation expense amount in GHS"
+        },
+        "wtFood": {
+          "type": "string",
+          "description": "Food and snack expense amount in GHS"
+        },
+        "wtWater": {
+          "type": "string",
+          "description": "Water expense amount in GHS"
+        },
+        "wtMisc": {
+          "type": "string",
+          "description": "Miscellaneous expense amount in GHS"
+        },
         "userId": {
           "type": "string",
           "description": "ID of the user who owns the record"

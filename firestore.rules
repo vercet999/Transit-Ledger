@@ -26,6 +26,11 @@ service cloud.firestore {
                  ( !('morning' in data) || (data.morning is string && data.morning.size() <= 50)) &&
                  ( !('evening' in data) || (data.evening is string && data.evening.size() <= 50)) &&
                  ( !('crossedOut' in data) || data.crossedOut is bool) &&
+                 ( !('isWorkTrip' in data) || data.isWorkTrip is bool) &&
+                 ( !('wtAccommodation' in data) || (data.wtAccommodation is string && data.wtAccommodation.size() <= 50)) &&
+                 ( !('wtFood' in data) || (data.wtFood is string && data.wtFood.size() <= 50)) &&
+                 ( !('wtWater' in data) || (data.wtWater is string && data.wtWater.size() <= 50)) &&
+                 ( !('wtMisc' in data) || (data.wtMisc is string && data.wtMisc.size() <= 50)) &&
                  ( !('updatedAt' in data) || data.updatedAt == request.time || data.updatedAt is timestamp );
         }
 
@@ -35,7 +40,7 @@ service cloud.firestore {
 
         allow create: if isOwner(userId) && isValidId(fareId) && isValidFare(incoming());
         allow update: if isOwner(userId) && isValidFare(incoming()) && incoming().userId == existing().userId &&
-          incoming().diff(existing()).affectedKeys().hasOnly(['morning', 'evening', 'crossedOut', 'updatedAt']);
+          incoming().diff(existing()).affectedKeys().hasOnly(['morning', 'evening', 'crossedOut', 'updatedAt', 'isWorkTrip', 'wtAccommodation', 'wtFood', 'wtWater', 'wtMisc']);
         allow delete: if isOwner(userId);
       }
 

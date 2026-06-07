@@ -49,7 +49,15 @@ import {
   Minimize2,
   Settings,
   Bell,
-  User
+  User,
+  Briefcase,
+  Home,
+  Utensils,
+  Droplet,
+  Receipt,
+  Car,
+  Plus,
+  Trash
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -101,6 +109,11 @@ interface DayFare {
   morning: string;
   evening: string;
   crossedOut?: boolean;
+  isWorkTrip?: boolean;
+  wtAccommodation?: string;
+  wtFood?: string;
+  wtWater?: string;
+  wtMisc?: string;
 }
 
 interface MonthlyFares {
@@ -170,10 +183,49 @@ function FareInput({ valueInGhs, rate, onChange, placeholder, typeContext }: { v
   );
 }
 
-const CustomTooltip = ({ active, payload, currentSymbol, currentDate }: any) => {
+const CustomTooltip = ({ active, payload, currentSymbol, currentDate, trackingMode }: any) => {
   if (active && payload && payload.length) {
     const data = payload[0].payload;
     const dateObj = new Date(currentDate.getFullYear(), currentDate.getMonth(), parseInt(data.date));
+    
+    if (trackingMode === 'worktrip') {
+      const hasTripExpenses = (data.wtTotal || 0) > 0;
+      return (
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl rounded-xl p-3 z-50">
+          <p className="font-bold text-slate-800 dark:text-slate-200 pb-2 mb-2 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5 text-xs text-violet-600 dark:text-violet-400">
+            <Briefcase size={12} />
+            {format(dateObj, 'MMM do')} (Work Trip)
+          </p>
+          {hasTripExpenses ? (
+            <div className="space-y-1.5 w-40">
+              <div className="flex justify-between gap-4 text-xs">
+                <span className="text-slate-500 font-medium">Accommodation</span>
+                <span className="font-bold text-slate-700 dark:text-slate-300">{currentSymbol}{(data.wtAccommodation || 0).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between gap-4 text-xs">
+                <span className="text-slate-500 font-medium">Food</span>
+                <span className="font-bold text-slate-700 dark:text-slate-300">{currentSymbol}{(data.wtFood || 0).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between gap-4 text-xs">
+                <span className="text-slate-500 font-medium">Water</span>
+                <span className="font-bold text-slate-700 dark:text-slate-300">{currentSymbol}{(data.wtWater || 0).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between gap-4 text-xs">
+                <span className="text-slate-500 font-medium">Misc</span>
+                <span className="font-bold text-slate-700 dark:text-slate-300">{currentSymbol}{(data.wtMisc || 0).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between gap-4 text-xs mt-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <span className="font-bold text-violet-650">Trip Total</span>
+                <span className="font-black text-violet-700 dark:text-violet-300">{currentSymbol}{(data.wtTotal || 0).toFixed(2)}</span>
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-slate-400 italic">No expenses logged.</p>
+          )}
+        </div>
+      );
+    }
+
     return (
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl rounded-xl p-3 z-50">
         <p className="font-bold text-slate-800 dark:text-slate-200 pb-2 mb-2 border-b border-slate-100 dark:border-slate-800">
@@ -199,6 +251,14 @@ const CustomTooltip = ({ active, payload, currentSymbol, currentDate }: any) => 
 
 export default function App() {
   const [currentDate, setCurrentDate] = useState(new Date());
+  const [trackingMode, setTrackingMode] = useState<'transit' | 'worktrip'>(() => {
+    return (localStorage.getItem('trackingMode') as 'transit' | 'worktrip') || 'transit';
+  });
+  
+  // Save trackingMode whenever it changes
+  useEffect(() => {
+    localStorage.setItem('trackingMode', trackingMode);
+  }, [trackingMode]);
   
   // Authentication State
   const [user, setUser] = useState<any>(null);
@@ -272,6 +332,9 @@ export default function App() {
   }, []);
 
   const getIsCrossedOut = useCallback((day: Date, dayFare: DayFare | undefined) => {
+    if (dayFare?.isWorkTrip) {
+      return false;
+    }
     if (dayFare && dayFare.crossedOut !== undefined) {
       return dayFare.crossedOut;
     }
@@ -568,6 +631,12 @@ export default function App() {
         ...current,
         crossedOut: !currentlyCrossedOut
       };
+
+      // if crossedOut, disable work trip
+      if (updated.crossedOut) {
+        updated.isWorkTrip = false;
+      }
+
       const newState = {
         ...prev,
         [dateKey]: updated
@@ -586,43 +655,185 @@ export default function App() {
     });
   };
 
-  const { totalThisMonth, avgDaily, chartData, activeDaysCount, forecast } = useMemo(() => {
+  const handleSetDayStatus = (date: Date, status: 'regular' | 'off' | 'worktrip') => {
+    const dateKey = format(date, 'yyyy-MM-dd');
+    setFares(prev => {
+      const current = prev[dateKey] || { morning: '', evening: '' };
+      const updated = { ...current };
+      
+      if (status === 'regular') {
+        updated.crossedOut = false;
+        updated.isWorkTrip = false;
+        // clear expenses
+        updated.wtAccommodation = '';
+        updated.wtFood = '';
+        updated.wtWater = '';
+        updated.wtMisc = '';
+      } else if (status === 'off') {
+        updated.crossedOut = true;
+        updated.isWorkTrip = false;
+        updated.morning = '0';
+        updated.evening = '0';
+        // clear expenses
+        updated.wtAccommodation = '';
+        updated.wtFood = '';
+        updated.wtWater = '';
+        updated.wtMisc = '';
+      } else if (status === 'worktrip') {
+        updated.crossedOut = false;
+        updated.isWorkTrip = true;
+        updated.morning = '';
+        updated.evening = '';
+      }
+
+      const newState = {
+        ...prev,
+        [dateKey]: updated
+      };
+
+      if (user) {
+        const fareDocPath = `users/${user.uid}/fares`;
+        setDoc(doc(db, fareDocPath, dateKey), {
+          ...updated,
+          userId: user.uid,
+          updatedAt: serverTimestamp()
+        }).catch(err => handleFirestoreError(err, OperationType.WRITE, fareDocPath));
+      }
+      return newState;
+    });
+  };
+
+  const handleWorkTripExpenseChange = (date: Date, field: 'wtAccommodation' | 'wtFood' | 'wtWater' | 'wtMisc', value: string) => {
+    const dateKey = format(date, 'yyyy-MM-dd');
+    setFares(prev => {
+      const current = prev[dateKey] || { morning: '', evening: '' };
+      const updated = {
+        ...current,
+        [field]: value,
+        isWorkTrip: true,
+        crossedOut: false,
+        morning: '',
+        evening: ''
+      };
+      
+      const newState = {
+        ...prev,
+        [dateKey]: updated
+      };
+      
+      if (user) {
+        const fareDocPath = `users/${user.uid}/fares`;
+        setDoc(doc(db, fareDocPath, dateKey), {
+          ...updated,
+          userId: user.uid,
+          updatedAt: serverTimestamp()
+        }).catch(err => handleFirestoreError(err, OperationType.WRITE, fareDocPath));
+      }
+      return newState;
+    });
+  };
+
+  const { 
+    totalThisMonth, 
+    avgDaily, 
+    chartData, 
+    activeDaysCount, 
+    forecast,
+    workTripDaysThisMonth,
+    workTripTotalThisMonth,
+    wtAccommodationTotal,
+    wtFoodTotal,
+    wtWaterTotal,
+    wtMiscTotal
+  } = useMemo(() => {
     const daysInMonth = eachDayOfInterval({ start: monthStart, end: monthEnd });
     let total = 0;
     let activeDays = 0;
+    
+    let wtDays = 0;
+    let wtTotal = 0;
+    let wtAccommodationSum = 0;
+    let wtFoodSum = 0;
+    let wtWaterSum = 0;
+    let wtMiscSum = 0;
     
     // First pass to get total and active days correctly
     daysInMonth.forEach(day => {
       const dateKey = format(day, 'yyyy-MM-dd');
       const dayFare = fares[dateKey];
-      const crossedOut = getIsCrossedOut(day, dayFare);
-      if (!crossedOut && dayFare) {
-        const morning = parseFloat(dayFare.morning) || 0;
-        const evening = parseFloat(dayFare.evening) || 0;
-        if (morning + evening > 0) activeDays++;
-        total += (morning + evening) * currentRate;
+      
+      if (dayFare) {
+        const crossedOut = getIsCrossedOut(day, dayFare);
+        const isWorkTrip = dayFare.isWorkTrip || false;
+        
+        if (!crossedOut && !isWorkTrip) {
+          const morning = parseFloat(dayFare.morning) || 0;
+          const evening = parseFloat(dayFare.evening) || 0;
+          if (morning + evening > 0) activeDays++;
+          total += (morning + evening) * currentRate;
+        } else if (isWorkTrip) {
+          wtDays++;
+          const accommodation = parseFloat(dayFare.wtAccommodation) || 0;
+          const food = parseFloat(dayFare.wtFood) || 0;
+          const water = parseFloat(dayFare.wtWater) || 0;
+          const misc = parseFloat(dayFare.wtMisc) || 0;
+          
+          wtAccommodationSum += accommodation * currentRate;
+          wtFoodSum += food * currentRate;
+          wtWaterSum += water * currentRate;
+          wtMiscSum += misc * currentRate;
+          
+          wtTotal += (accommodation + food + water + misc) * currentRate;
+        }
       }
     });
 
     const avg = activeDays > 0 ? total / activeDays : 0;
 
     let cumulative = 0;
+    let cumulativeWt = 0;
     const chart = daysInMonth.map(day => {
       const dateKey = format(day, 'yyyy-MM-dd');
       const dayFare = fares[dateKey];
       const crossedOut = getIsCrossedOut(day, dayFare);
+      const isWorkTrip = dayFare?.isWorkTrip || false;
+      
       let dayTotalGhs = 0;
       let mParsed = 0;
       let eParsed = 0;
-      if (!crossedOut && dayFare) {
-        const morning = parseFloat(dayFare.morning) || 0;
-        const evening = parseFloat(dayFare.evening) || 0;
-        mParsed = morning * currentRate;
-        eParsed = evening * currentRate;
-        dayTotalGhs = morning + evening;
+      
+      let dayWtGhs = 0;
+      let wtAcc = 0;
+      let wtFd = 0;
+      let wtWt = 0;
+      let wtMc = 0;
+      
+      if (dayFare && !crossedOut) {
+        if (!isWorkTrip) {
+          const morning = parseFloat(dayFare.morning) || 0;
+          const evening = parseFloat(dayFare.evening) || 0;
+          mParsed = morning * currentRate;
+          eParsed = evening * currentRate;
+          dayTotalGhs = morning + evening;
+        } else {
+          const accommodation = parseFloat(dayFare.wtAccommodation) || 0;
+          const food = parseFloat(dayFare.wtFood) || 0;
+          const water = parseFloat(dayFare.wtWater) || 0;
+          const misc = parseFloat(dayFare.wtMisc) || 0;
+          
+          wtAcc = accommodation * currentRate;
+          wtFd = food * currentRate;
+          wtWt = water * currentRate;
+          wtMc = misc * currentRate;
+          
+          dayWtGhs = accommodation + food + water + misc;
+        }
       }
+      
       const dayTotalSelected = dayTotalGhs * currentRate;
+      const dayWtSelected = dayWtGhs * currentRate;
       cumulative += dayTotalSelected;
+      cumulativeWt += dayWtSelected;
       
       return {
         date: format(day, 'd'),
@@ -630,7 +841,15 @@ export default function App() {
         cumulative: cumulative,
         average: avg,
         morningParsed: mParsed,
-        eveningParsed: eParsed
+        eveningParsed: eParsed,
+        
+        // work trip values
+        wtTotal: dayWtSelected,
+        wtCumulative: cumulativeWt,
+        wtAccommodation: wtAcc,
+        wtFood: wtFd,
+        wtWater: wtWt,
+        wtMisc: wtMc
       };
     });
 
@@ -638,8 +857,14 @@ export default function App() {
     // Forecast if current month is selected
     let currentForecast = total;
     if (isSameMonth(currentDate, today)) {
-        const passedWorkDays = daysInMonth.filter(d => d <= today && !getIsCrossedOut(d, fares[format(d, 'yyyy-MM-dd')])).length;
-        const totalWorkDays = daysInMonth.filter(d => !getIsCrossedOut(d, fares[format(d, 'yyyy-MM-dd')])).length;
+        const passedWorkDays = daysInMonth.filter(d => {
+          const dk = format(d, 'yyyy-MM-dd');
+          return d <= today && !getIsCrossedOut(d, fares[dk]) && !fares[dk]?.isWorkTrip;
+        }).length;
+        const totalWorkDays = daysInMonth.filter(d => {
+          const dk = format(d, 'yyyy-MM-dd');
+          return !getIsCrossedOut(d, fares[dk]) && !fares[dk]?.isWorkTrip;
+        }).length;
         
         const avgPerWorkDay = passedWorkDays > 0 ? total / passedWorkDays : 0;
         currentForecast = total + (totalWorkDays - passedWorkDays) * avgPerWorkDay;
@@ -650,7 +875,15 @@ export default function App() {
       avgDaily: avg,
       chartData: chart,
       activeDaysCount: activeDays,
-      forecast: currentForecast
+      forecast: currentForecast,
+      
+      // Work Trip outputs
+      workTripDaysThisMonth: wtDays,
+      workTripTotalThisMonth: wtTotal,
+      wtAccommodationTotal: wtAccommodationSum,
+      wtFoodTotal: wtFoodSum,
+      wtWaterTotal: wtWaterSum,
+      wtMiscTotal: wtMiscSum
     };
   }, [fares, monthStart, monthEnd, currentDate, currentRate]);
 
@@ -661,22 +894,41 @@ export default function App() {
       const dateKey = format(day, 'yyyy-MM-dd');
       const dayFare = fares[dateKey] || { morning: '', evening: '' };
       const crossedOut = getIsCrossedOut(day, dayFare);
-      const m = crossedOut ? 0 : (parseFloat(dayFare.morning) || 0) * currentRate;
-      const e = crossedOut ? 0 : (parseFloat(dayFare.evening) || 0) * currentRate;
+      const isWorkTrip = dayFare.isWorkTrip || false;
+      
+      const m = crossedOut || isWorkTrip ? 0 : (parseFloat(dayFare.morning) || 0) * currentRate;
+      const e = crossedOut || isWorkTrip ? 0 : (parseFloat(dayFare.evening) || 0) * currentRate;
+      
+      const acc = isWorkTrip ? (parseFloat(dayFare.wtAccommodation) || 0) * currentRate : 0;
+      const fd = isWorkTrip ? (parseFloat(dayFare.wtFood) || 0) * currentRate : 0;
+      const wt = isWorkTrip ? (parseFloat(dayFare.wtWater) || 0) * currentRate : 0;
+      const mc = isWorkTrip ? (parseFloat(dayFare.wtMisc) || 0) * currentRate : 0;
+      
+      const tripTotal = acc + fd + wt + mc;
+      
+      let status = 'Regular Workday';
+      if (crossedOut) status = 'Off-Day / Crossed Out';
+      if (isWorkTrip) status = 'Work Trip';
+
       return {
         Date: format(day, 'MMM dd, yyyy'),
-        'Day': format(day, 'EEEE'),
-        'Crossed Out': crossedOut ? 'Yes' : 'No',
-        [`Morning Fare (${currentSymbol})`]: m,
-        [`Evening Fare (${currentSymbol})`]: e,
-        [`Total Daily (${currentSymbol})`]: m + e
+        'Day of Week': format(day, 'EEEE'),
+        'Status': status,
+        [`Morning Fare (${currentSymbol})`]: m || '',
+        [`Evening Fare (${currentSymbol})`]: e || '',
+        [`Transit Total (${currentSymbol})`]: (m + e) || '',
+        [`Accommodation (${currentSymbol})`]: acc || '',
+        [`Food & Drinks (${currentSymbol})`]: fd || '',
+        [`Water (${currentSymbol})`]: wt || '',
+        [`Misc Expense (${currentSymbol})`]: mc || '',
+        [`Work Trip Total (${currentSymbol})`]: tripTotal || ''
       };
     });
 
     const worksheet = XLSX.utils.json_to_sheet(data);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, format(currentDate, 'MMM yyyy'));
-    XLSX.writeFile(workbook, `Transport_Fares_${format(currentDate, 'MMM_yyyy')}.xlsx`);
+    XLSX.writeFile(workbook, `Commute_and_Expenses_${format(currentDate, 'MMM_yyyy')}.xlsx`);
   };
 
   return (
@@ -715,6 +967,34 @@ export default function App() {
               )}
             </button>
           </div>
+        </div>
+
+        {/* Tracking Mode Switcher */}
+        <div className="flex bg-slate-200/50 dark:bg-slate-800 p-1 rounded-2xl w-full sm:w-fit mb-6 shadow-inner border border-slate-200/50 dark:border-slate-800/80">
+          <button
+            onClick={() => setTrackingMode('transit')}
+            className={cn(
+              "flex-1 sm:flex-none px-6 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-2",
+              trackingMode === 'transit'
+                ? "bg-white dark:bg-slate-700 text-primary-600 dark:text-white shadow-md ring-1 ring-slate-200/30 dark:ring-slate-600"
+                : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
+            )}
+          >
+            <Car size={16} />
+            Transit Commute
+          </button>
+          <button
+            onClick={() => setTrackingMode('worktrip')}
+            className={cn(
+              "flex-1 sm:flex-none px-6 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-2",
+              trackingMode === 'worktrip'
+                ? "bg-white dark:bg-slate-700 text-primary-600 dark:text-white shadow-md ring-1 ring-slate-200/30 dark:ring-slate-600"
+                : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
+            )}
+          >
+            <Briefcase size={16} />
+            Work Trips
+          </button>
         </div>
 
         {/* Main Bento Grid */}
@@ -798,7 +1078,10 @@ export default function App() {
                           key={dateKey}
                           className={cn(
                             "border rounded-xl p-1 sm:p-2 flex flex-col justify-between transition-colors relative overflow-hidden",
-                            !currentMonth ? "border-transparent bg-slate-50/50 dark:bg-slate-900/40 opacity-40 grayscale" : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-primary-300 dark:hover:border-primary-600 shadow-sm",
+                            !currentMonth ? "border-transparent bg-slate-50/50 dark:bg-slate-900/40 opacity-40 grayscale" : 
+                            (dayFare?.isWorkTrip 
+                              ? "border-violet-200 dark:border-violet-900/60 bg-violet-50/20 dark:bg-violet-950/10 hover:border-violet-300" 
+                              : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-primary-300 dark:hover:border-primary-600 shadow-sm"),
                             today && "border-primary-400 dark:border-primary-500 ring-4 ring-primary-50 dark:ring-primary-900/20",
                             getIsCrossedOut(day, dayFare) && "opacity-75 grayscale bg-slate-50/80 dark:bg-slate-900/80"
                           )}
@@ -840,34 +1123,64 @@ export default function App() {
                                   </span>
                                 </div>
                               )}
-                              <div className={cn("space-y-1 transition-all", getIsCrossedOut(day, dayFare) ? "opacity-20 pointer-events-none select-none blur-[1px]" : "opacity-100")}>
-                                <div className="group">
-                                  <FareInput 
-                                    valueInGhs={dayFare.morning}
-                                    rate={currentRate}
-                                    onChange={(v) => handleFareChange(day, 'morning', v)}
-                                    placeholder="AM"
-                                    typeContext="morning"
-                                  />
+                              
+                              {dayFare?.isWorkTrip ? (
+                                <div 
+                                  onClick={() => {
+                                    setCurrentDate(day);
+                                    setView('day');
+                                  }}
+                                  className="flex flex-col justify-between items-stretch py-1 px-1.5 bg-violet-100/50 dark:bg-violet-950/30 border border-violet-100/80 dark:border-violet-900/40 rounded-lg text-slate-800 dark:text-slate-200 cursor-pointer hover:bg-violet-200/80 dark:hover:bg-violet-900/50 transition-colors"
+                                >
+                                  <div className="flex items-center gap-1 text-[9px] sm:text-[10px] font-black text-violet-700 dark:text-violet-300 uppercase tracking-wide">
+                                    <Briefcase size={10} className="stroke-[2.5]" />
+                                    <span>Trip Expenses</span>
+                                  </div>
+                                  {(() => {
+                                    const acc = parseFloat(dayFare.wtAccommodation) || 0;
+                                    const fd = parseFloat(dayFare.wtFood) || 0;
+                                    const wt = parseFloat(dayFare.wtWater) || 0;
+                                    const mc = parseFloat(dayFare.wtMisc) || 0;
+                                    const total = (acc + fd + wt + mc) * currentRate;
+                                    return (
+                                      <div className="text-right text-[11px] sm:text-xs font-black text-violet-800 dark:text-violet-200 mt-1">
+                                        {currentSymbol}{total.toFixed(2)}
+                                      </div>
+                                    );
+                                  })()}
                                 </div>
-                                <div className="group">
-                                  <FareInput 
-                                    valueInGhs={dayFare.evening}
-                                    rate={currentRate}
-                                    onChange={(v) => handleFareChange(day, 'evening', v)}
-                                    placeholder="PM"
-                                    typeContext="evening"
-                                  />
-                                </div>
-                              </div>
-                              {/* Daily Total Line */}
-                              {!dayFare.crossedOut && (parseFloat(dayFare.morning) > 0 || parseFloat(dayFare.evening) > 0) && (
-                                <div className={cn(
-                                  "text-[10px] sm:text-[11px] font-bold text-right pt-1 mt-1 border-t transition-opacity",
-                                  isDarkMode ? "border-slate-800 text-primary-300" : "border-slate-100 text-primary-600"
-                                )}>
-                                  {currentSymbol}{(((parseFloat(dayFare.morning) || 0) + (parseFloat(dayFare.evening) || 0)) * currentRate).toFixed(2)}
-                                </div>
+                              ) : (
+                                <>
+                                  <div className={cn("space-y-1 transition-all", getIsCrossedOut(day, dayFare) ? "opacity-20 pointer-events-none select-none blur-[1px]" : "opacity-100")}>
+                                    <div className="group">
+                                      <FareInput 
+                                        valueInGhs={dayFare.morning}
+                                        rate={currentRate}
+                                        onChange={(v) => handleFareChange(day, 'morning', v)}
+                                        placeholder="AM"
+                                        typeContext="morning"
+                                      />
+                                    </div>
+                                    <div className="group">
+                                      <FareInput 
+                                        valueInGhs={dayFare.evening}
+                                        rate={currentRate}
+                                        onChange={(v) => handleFareChange(day, 'evening', v)}
+                                        placeholder="PM"
+                                        typeContext="evening"
+                                      />
+                                    </div>
+                                  </div>
+                                  {/* Daily Total Line */}
+                                  {!dayFare.crossedOut && (parseFloat(dayFare.morning) > 0 || parseFloat(dayFare.evening) > 0) && (
+                                    <div className={cn(
+                                      "text-[10px] sm:text-[11px] font-bold text-right pt-1 mt-1 border-t transition-opacity",
+                                      isDarkMode ? "border-slate-800 text-primary-300" : "border-slate-100 text-primary-600"
+                                    )}>
+                                      {currentSymbol}{(((parseFloat(dayFare.morning) || 0) + (parseFloat(dayFare.evening) || 0)) * currentRate).toFixed(2)}
+                                    </div>
+                                  )}
+                                </>
                               )}
                             </div>
                           )}
@@ -890,82 +1203,217 @@ export default function App() {
                       const dateKey = format(currentDate, 'yyyy-MM-dd');
                       const dayFare = fares[dateKey] || { morning: '', evening: '' };
                       const crossedOut = getIsCrossedOut(currentDate, dayFare);
+                      const isWorkTrip = dayFare.isWorkTrip || false;
                       
                       return (
                         <div className={cn(
-                          "bg-slate-50 dark:bg-slate-800/50 rounded-3xl p-6 border-2 transition-all relative overflow-hidden",
-                          crossedOut ? "border-red-200 dark:border-red-900/30" : "border-slate-100 dark:border-slate-800"
+                          "bg-slate-50 dark:bg-slate-800/50 rounded-3xl p-6 border-2 transition-all relative overflow-hidden w-full",
+                          crossedOut 
+                            ? "border-red-200 dark:border-red-900/30" 
+                            : (isWorkTrip 
+                              ? "border-violet-200 dark:border-violet-900/40 bg-violet-50/10 dark:bg-violet-950/5" 
+                              : "border-slate-100 dark:border-slate-800")
                         )}>
-                          {crossedOut && (
-                            <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-20">
-                             <div className="absolute w-[120%] h-[4px] bg-red-400/20 -rotate-[15deg]"></div>
-                             <span className="text-xl font-black text-red-500/60 dark:text-red-400/60 uppercase tracking-[0.2em] bg-white/90 dark:bg-slate-900/90 px-4 py-2 rounded-2xl backdrop-blur-md shadow-2xl ring-2 ring-red-100 dark:ring-red-900/50 -rotate-[5deg]">
-                               {getHolidayInfo(currentDate).isHoliday && (!dayFare || dayFare.crossedOut === undefined) ? getHolidayInfo(currentDate).name || 'Holiday' : 'No Work'}
-                             </span>
-                           </div>
-                          )}
-
-                          <div className={cn("space-y-6", crossedOut && "opacity-20 blur-sm pointer-events-none")}>
-                            <div className="space-y-2">
-                              <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2 px-1">
-                                <Sun size={14} className="text-secondary-500" /> Morning fare
-                              </label>
-                              <div className="relative">
-                                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-slate-400">{currentSymbol}</span>
-                                <input 
-                                  type="number"
-                                  step="any"
-                                  value={dayFare.morning ? (parseFloat(dayFare.morning) * currentRate).toFixed(2).replace(/\.?0+$/, '') : ''}
-                                  onChange={(e) => {
-                                    const val = e.target.value === '' ? '' : (parseFloat(e.target.value) / currentRate).toString();
-                                    handleFareChange(currentDate, 'morning', val);
-                                  }}
-                                  placeholder="0.00"
-                                  className="w-full pl-12 pr-6 py-4 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-2xl text-2xl font-black text-slate-900 dark:text-white outline-none focus:border-primary-400 dark:focus:border-primary-600 transition-all shadow-sm"
-                                />
-                              </div>
-                            </div>
-
-                            <div className="space-y-2">
-                              <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2 px-1">
-                                <Moon size={14} className="text-primary-500" /> Evening fare
-                              </label>
-                              <div className="relative">
-                                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-slate-400">{currentSymbol}</span>
-                                <input 
-                                  type="number"
-                                  step="any"
-                                  value={dayFare.evening ? (parseFloat(dayFare.evening) * currentRate).toFixed(2).replace(/\.?0+$/, '') : ''}
-                                  onChange={(e) => {
-                                    const val = e.target.value === '' ? '' : (parseFloat(e.target.value) / currentRate).toString();
-                                    handleFareChange(currentDate, 'evening', val);
-                                  }}
-                                  placeholder="0.00"
-                                  className="w-full pl-12 pr-6 py-4 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-2xl text-2xl font-black text-slate-900 dark:text-white outline-none focus:border-primary-400 dark:focus:border-primary-600 transition-all shadow-sm"
-                                />
-                              </div>
-                            </div>
-
-                            <div className="pt-4 border-t-2 border-slate-100 dark:border-slate-800 flex justify-between items-center">
-                                <span className="font-bold text-slate-500">Daily Total</span>
-                                <span className="text-3xl font-black text-primary-600 dark:text-primary-400">
-                                  {currentSymbol}{(((parseFloat(dayFare.morning) || 0) + (parseFloat(dayFare.evening) || 0)) * currentRate).toFixed(2)}
-                                </span>
-                            </div>
+                          {/* 3-way Segment Selector */}
+                          <div className="grid grid-cols-3 bg-slate-200/50 dark:bg-slate-900 p-1 rounded-xl gap-1 mb-6 border border-slate-200/30 dark:border-slate-800/80">
+                            <button
+                              onClick={() => handleSetDayStatus(currentDate, 'regular')}
+                              className={cn(
+                                "py-2.5 text-xs font-bold rounded-lg transition-all flex flex-col items-center gap-1.5",
+                                (!crossedOut && !isWorkTrip)
+                                  ? "bg-white dark:bg-slate-800 text-primary-600 dark:text-white shadow-md ring-1 ring-slate-200/30 dark:ring-slate-700"
+                                  : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
+                              )}
+                            >
+                              <Car size={15} />
+                              <span>Commute</span>
+                            </button>
+                            <button
+                              onClick={() => handleSetDayStatus(currentDate, 'off')}
+                              className={cn(
+                                "py-2.5 text-xs font-bold rounded-lg transition-all flex flex-col items-center gap-1.5",
+                                crossedOut
+                                  ? "bg-red-500 text-white shadow-md"
+                                  : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
+                              )}
+                            >
+                              <X size={15} />
+                              <span>Off-Day</span>
+                            </button>
+                            <button
+                              onClick={() => handleSetDayStatus(currentDate, 'worktrip')}
+                              className={cn(
+                                "py-2.5 text-xs font-bold rounded-lg transition-all flex flex-col items-center gap-1.5",
+                                isWorkTrip
+                                  ? "bg-violet-600 dark:bg-violet-700 text-white shadow-md"
+                                  : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
+                              )}
+                            >
+                              <Briefcase size={15} />
+                              <span>Work Trip</span>
+                            </button>
                           </div>
-                          
-                          <button 
-                            onClick={() => handleToggleCrossOut(currentDate)}
-                            className={cn(
-                              "mt-6 w-full py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2",
-                              crossedOut 
-                                ? "bg-red-500 text-white shadow-lg shadow-red-200 dark:shadow-none" 
-                                : "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600"
-                            )}
-                          >
-                            <X size={16} strokeWidth={3} />
-                            {crossedOut ? "Marked as Off-day" : "Mark as Off-day"}
-                          </button>
+
+                          {crossedOut ? (
+                            <div className="py-6 flex flex-col items-center justify-center text-center space-y-3 bg-white dark:bg-slate-900 rounded-2xl border border-red-100 dark:border-red-900/20 p-5 shadow-sm">
+                              <div className="w-12 h-12 rounded-full bg-red-50 dark:bg-red-950/40 text-red-500/80 flex items-center justify-center border border-red-100 dark:border-red-900/50">
+                                <X size={22} strokeWidth={2.5} />
+                              </div>
+                              <div>
+                                <h4 className="font-bold text-sm text-slate-800 dark:text-slate-200">Off-Day / No Commute</h4>
+                                <p className="text-xs text-slate-400 dark:text-slate-500 max-w-[220px] mt-1 mx-auto leading-relaxed">
+                                  {getHolidayInfo(currentDate).isHoliday ? `${getHolidayInfo(currentDate).name || 'Holiday'} - ` : ''}Fares and recurring costs are skipped on off-days.
+                                </p>
+                              </div>
+                            </div>
+                          ) : isWorkTrip ? (
+                            <div className="space-y-4">
+                              <div className="space-y-1">
+                                <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase flex items-center gap-2 px-1">
+                                  <Home size={14} className="text-violet-500" /> Accommodation
+                                </label>
+                                <div className="relative">
+                                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-lg font-bold text-slate-400">{currentSymbol}</span>
+                                  <input 
+                                    type="number"
+                                    step="any"
+                                    value={dayFare.wtAccommodation ? (parseFloat(dayFare.wtAccommodation) * currentRate).toFixed(2).replace(/\.?0+$/, '') : ''}
+                                    onChange={(e) => {
+                                      const val = e.target.value === '' ? '' : (parseFloat(e.target.value) / currentRate).toString();
+                                      handleWorkTripExpenseChange(currentDate, 'wtAccommodation', val);
+                                    }}
+                                    placeholder="0.00"
+                                    className="w-full pl-10 pr-4 py-3 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl text-lg font-black text-slate-900 dark:text-white outline-none focus:border-violet-400 dark:focus:border-violet-600 transition-all shadow-sm"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase flex items-center gap-2 px-1">
+                                  <Utensils size={14} className="text-violet-500" /> Food & Snacks
+                                </label>
+                                <div className="relative">
+                                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-lg font-bold text-slate-400">{currentSymbol}</span>
+                                  <input 
+                                    type="number"
+                                    step="any"
+                                    value={dayFare.wtFood ? (parseFloat(dayFare.wtFood) * currentRate).toFixed(2).replace(/\.?0+$/, '') : ''}
+                                    onChange={(e) => {
+                                      const val = e.target.value === '' ? '' : (parseFloat(e.target.value) / currentRate).toString();
+                                      handleWorkTripExpenseChange(currentDate, 'wtFood', val);
+                                    }}
+                                    placeholder="0.00"
+                                    className="w-full pl-10 pr-4 py-3 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl text-lg font-black text-slate-900 dark:text-white outline-none focus:border-violet-400 dark:focus:border-violet-600 transition-all shadow-sm"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase flex items-center gap-2 px-1">
+                                  <Droplet size={14} className="text-violet-500" /> Water & Drinks
+                                </label>
+                                <div className="relative">
+                                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-lg font-bold text-slate-400">{currentSymbol}</span>
+                                  <input 
+                                    type="number"
+                                    step="any"
+                                    value={dayFare.wtWater ? (parseFloat(dayFare.wtWater) * currentRate).toFixed(2).replace(/\.?0+$/, '') : ''}
+                                    onChange={(e) => {
+                                      const val = e.target.value === '' ? '' : (parseFloat(e.target.value) / currentRate).toString();
+                                      handleWorkTripExpenseChange(currentDate, 'wtWater', val);
+                                    }}
+                                    placeholder="0.00"
+                                    className="w-full pl-10 pr-4 py-3 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl text-lg font-black text-slate-900 dark:text-white outline-none focus:border-violet-400 dark:focus:border-violet-600 transition-all shadow-sm"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase flex items-center gap-2 px-1">
+                                  <Receipt size={14} className="text-violet-500" /> Miscellaneous Expense
+                                </label>
+                                <div className="relative">
+                                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-lg font-bold text-slate-400">{currentSymbol}</span>
+                                  <input 
+                                    type="number"
+                                    step="any"
+                                    value={dayFare.wtMisc ? (parseFloat(dayFare.wtMisc) * currentRate).toFixed(2).replace(/\.?0+$/, '') : ''}
+                                    onChange={(e) => {
+                                      const val = e.target.value === '' ? '' : (parseFloat(e.target.value) / currentRate).toString();
+                                      handleWorkTripExpenseChange(currentDate, 'wtMisc', val);
+                                    }}
+                                    placeholder="0.00"
+                                    className="w-full pl-10 pr-4 py-3 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl text-lg font-black text-slate-900 dark:text-white outline-none focus:border-violet-400 dark:focus:border-violet-600 transition-all shadow-sm"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex justify-between items-center">
+                                  <span className="font-bold text-slate-500">Trip Expenditure</span>
+                                  {(() => {
+                                    const acc = parseFloat(dayFare.wtAccommodation) || 0;
+                                    const fd = parseFloat(dayFare.wtFood) || 0;
+                                    const wt = parseFloat(dayFare.wtWater) || 0;
+                                    const mc = parseFloat(dayFare.wtMisc) || 0;
+                                    const total = (acc + fd + wt + mc) * currentRate;
+                                    return (
+                                      <span className="text-2xl font-black text-violet-600 dark:text-violet-400">
+                                        {currentSymbol}{total.toFixed(2)}
+                                      </span>
+                                    );
+                                  })()}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="space-y-6">
+                              <div className="space-y-2">
+                                <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2 px-1">
+                                  <Sun size={14} className="text-secondary-500" /> Morning fare
+                                </label>
+                                <div className="relative">
+                                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-slate-400">{currentSymbol}</span>
+                                  <input 
+                                    type="number"
+                                    step="any"
+                                    value={dayFare.morning ? (parseFloat(dayFare.morning) * currentRate).toFixed(2).replace(/\.?0+$/, '') : ''}
+                                    onChange={(e) => {
+                                      const val = e.target.value === '' ? '' : (parseFloat(e.target.value) / currentRate).toString();
+                                      handleFareChange(currentDate, 'morning', val);
+                                    }}
+                                    placeholder="0.00"
+                                    className="w-full pl-12 pr-6 py-4 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-2xl text-2xl font-black text-slate-900 dark:text-white outline-none focus:border-primary-400 dark:focus:border-primary-600 transition-all shadow-sm"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="space-y-2">
+                                <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2 px-1">
+                                  <Moon size={14} className="text-primary-500" /> Evening fare
+                                </label>
+                                <div className="relative">
+                                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-slate-400">{currentSymbol}</span>
+                                  <input 
+                                    type="number"
+                                    step="any"
+                                    value={dayFare.evening ? (parseFloat(dayFare.evening) * currentRate).toFixed(2).replace(/\.?0+$/, '') : ''}
+                                    onChange={(e) => {
+                                      const val = e.target.value === '' ? '' : (parseFloat(e.target.value) / currentRate).toString();
+                                      handleFareChange(currentDate, 'evening', val);
+                                    }}
+                                    placeholder="0.00"
+                                    className="w-full pl-12 pr-6 py-4 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-2xl text-2xl font-black text-slate-900 dark:text-white outline-none focus:border-primary-400 dark:focus:border-primary-600 transition-all shadow-sm"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="pt-4 border-t-2 border-slate-100 dark:border-slate-800 flex justify-between items-center">
+                                  <span className="font-bold text-slate-500">Daily Total</span>
+                                  <span className="text-3xl font-black text-primary-600 dark:text-primary-400">
+                                    {currentSymbol}{(((parseFloat(dayFare.morning) || 0) + (parseFloat(dayFare.evening) || 0)) * currentRate).toFixed(2)}
+                                  </span>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       );
                     })()}
@@ -1149,32 +1597,78 @@ export default function App() {
                 <div className="absolute -right-10 -top-10 w-40 h-40 bg-primary-500 rounded-full opacity-30 blur-3xl pointer-events-none"></div>
                 <div className="absolute -left-10 -bottom-10 w-40 h-40 bg-secondary-500 rounded-full opacity-20 blur-3xl pointer-events-none"></div>
                 
-                <span className="text-primary-300 dark:text-primary-400 text-sm font-semibold uppercase tracking-widest mb-2 z-10">Month Total Spent</span>
-                <h3 className="text-5xl lg:text-6xl font-black mb-4 z-10 tracking-tight">
-                  {currentSymbol}{totalThisMonth.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </h3>
-                <div className="flex items-center gap-2 z-10">
-                  <p className="text-xs text-slate-400">
-                    {isSameMonth(currentDate, new Date()) ? 'Forecasted end of month:' : 'Final monthly total:'}{' '}
-                    <span className="text-white font-bold">{currentSymbol}{forecast.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                  </p>
-                </div>
+                {trackingMode === 'worktrip' ? (
+                  <>
+                    <span className="text-violet-300 dark:text-violet-400 text-sm font-semibold uppercase tracking-widest mb-1 z-10 flex items-center gap-1.5">
+                      <Briefcase size={14} /> Month Trip Expenses
+                    </span>
+                    <h3 className="text-4xl lg:text-5xl font-black mb-3 z-10 tracking-tight">
+                      {currentSymbol}{workTripTotalThisMonth.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </h3>
+                    <div className="space-y-1.5 mt-1 pt-3 border-t border-slate-800 z-10 w-full">
+                      <div className="flex justify-between items-center text-[11px] leading-none">
+                        <span className="text-slate-400 flex items-center gap-1"><Home size={11} /> Accommodation</span>
+                        <span className="font-bold text-slate-200">{currentSymbol}{wtAccommodationTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-[11px] leading-none">
+                        <span className="text-slate-400 flex items-center gap-1"><Utensils size={11} /> Food & Snacks</span>
+                        <span className="font-bold text-slate-200">{currentSymbol}{wtFoodTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-[11px] leading-none">
+                        <span className="text-slate-400 flex items-center gap-1"><Droplet size={11} /> Water & Drinks</span>
+                        <span className="font-bold text-slate-200">{currentSymbol}{wtWaterTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-[11px] leading-none">
+                        <span className="text-slate-400 flex items-center gap-1"><Receipt size={11} /> Miscellaneous</span>
+                        <span className="font-bold text-slate-200">{currentSymbol}{wtMiscTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-primary-300 dark:text-primary-400 text-sm font-semibold uppercase tracking-widest mb-2 z-10">Month Total Spent</span>
+                    <h3 className="text-5xl lg:text-6xl font-black mb-4 z-10 tracking-tight">
+                      {currentSymbol}{totalThisMonth.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </h3>
+                    <div className="flex items-center gap-2 z-10">
+                      <p className="text-xs text-slate-400">
+                        {isSameMonth(currentDate, new Date()) ? 'Forecasted end of month:' : 'Final monthly total:'}{' '}
+                        <span className="text-white font-bold">{currentSymbol}{forecast.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </p>
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* Average Daily Tracker */}
               <div className="md:col-span-2 md:row-span-3 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm p-5 lg:p-6 flex flex-col justify-between transition-colors">
                 <div>
-                  <div className="w-10 h-10 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-xl flex items-center justify-center mb-4 transition-colors">
-                    <TrendingUp size={20} strokeWidth={2.5} />
+                  <div className={cn(
+                    "w-10 h-10 rounded-xl flex items-center justify-center mb-4 transition-colors",
+                    trackingMode === 'worktrip' 
+                      ? "bg-violet-50 dark:bg-violet-950/30 text-violet-600 dark:text-violet-400"
+                      : "bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400"
+                  )}>
+                    {trackingMode === 'worktrip' ? <Briefcase size={20} strokeWidth={2.5} /> : <TrendingUp size={20} strokeWidth={2.5} />}
                   </div>
-                  <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">Daily Avg</p>
+                  <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">
+                    {trackingMode === 'worktrip' ? "Trip Day Avg" : "Daily Avg"}
+                  </p>
                   <p className="text-2xl lg:text-3xl font-bold tracking-tight text-slate-900 dark:text-white">
-                    {currentSymbol}{avgDaily.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {currentSymbol}{(trackingMode === 'worktrip' 
+                      ? (workTripDaysThisMonth > 0 ? workTripTotalThisMonth / workTripDaysThisMonth : 0) 
+                      : avgDaily
+                    ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
                 </div>
                 <div className="mt-4">
-                  <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-900/40 px-2 py-1 rounded w-fit uppercase tracking-wide transition-colors">
-                    {activeDaysCount} Days Traveled
+                  <p className={cn(
+                    "text-[10px] font-bold px-2 py-1 rounded w-fit uppercase tracking-wide transition-colors",
+                    trackingMode === 'worktrip'
+                      ? "text-violet-700 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/40"
+                      : "text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/40"
+                  )}>
+                    {trackingMode === 'worktrip' ? `${workTripDaysThisMonth} Trip Days Covered` : `${activeDaysCount} Days Traveled`}
                   </p>
                 </div>
               </div>
@@ -1189,11 +1683,11 @@ export default function App() {
                     <ComposedChart data={chartData} margin={{ top: 10, right: 0, left: 0, bottom: 0 }}>
                       <Tooltip 
                         cursor={{fill: isDarkMode ? '#1e293b' : '#f1f5f9'}}
-                        content={<CustomTooltip currentSymbol={currentSymbol} currentDate={currentDate} />}
+                        content={<CustomTooltip currentSymbol={currentSymbol} currentDate={currentDate} trackingMode={trackingMode} />}
                       />
                       <Bar 
-                        dataKey="total" 
-                        fill="var(--theme-500, var(--color-indigo-500))" 
+                        dataKey={trackingMode === 'worktrip' ? "wtTotal" : "total"} 
+                        fill={trackingMode === 'worktrip' ? "#8b5cf6" : "var(--theme-500, var(--color-indigo-500))"} 
                         radius={[4, 4, 4, 4]} 
                         onClick={(data) => {
                           if (data && data.payload) {
@@ -1204,7 +1698,9 @@ export default function App() {
                         }}
                         cursor="pointer"
                       />
-                      <Line type="stepAfter" dataKey="average" stroke="#f43f5e" strokeWidth={2} strokeDasharray="5 5" dot={false} />
+                      {trackingMode !== 'worktrip' && (
+                        <Line type="stepAfter" dataKey="average" stroke="#f43f5e" strokeWidth={2} strokeDasharray="5 5" dot={false} />
+                      )}
                     </ComposedChart>
                   </ResponsiveContainer>
                 </div>
