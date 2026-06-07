@@ -196,6 +196,120 @@ function FareInput({ valueInGhs, rate, onChange, placeholder, typeContext }: { v
   );
 }
 
+function DayFareInput({
+  valueInGhs,
+  rate,
+  onChange,
+  placeholder,
+  currencySymbol,
+  typeContext
+}: {
+  valueInGhs: string;
+  rate: number;
+  onChange: (v: string) => void;
+  placeholder: string;
+  currencySymbol: string;
+  typeContext: 'morning' | 'evening';
+}) {
+  const [localVal, setLocalVal] = useState('');
+
+  useEffect(() => {
+    if (valueInGhs) {
+      const converted = (parseFloat(valueInGhs) * rate);
+      const str = converted.toFixed(2).replace(/\.?0+$/, '');
+      if (parseFloat(localVal || '0') !== converted) {
+        setLocalVal(str);
+      }
+    } else {
+      setLocalVal('');
+    }
+  }, [valueInGhs, rate]);
+
+  return (
+    <div className="relative">
+      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-slate-400">{currencySymbol}</span>
+      <input 
+        type="number"
+        step="any"
+        value={localVal}
+        onChange={(e) => {
+          setLocalVal(e.target.value);
+          const num = parseFloat(e.target.value);
+          if (!isNaN(num)) {
+            onChange((num / rate).toString());
+          } else if (e.target.value === '') {
+            onChange('');
+          }
+        }}
+        placeholder={placeholder}
+        className={cn(
+          "w-full pl-12 pr-6 py-4 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-2xl text-2xl font-black text-slate-900 dark:text-white outline-none transition-colors shadow-sm",
+          typeContext === 'morning' ? "focus:border-secondary-400 dark:focus:border-secondary-600" : "focus:border-primary-400 dark:focus:border-primary-600"
+        )}
+      />
+    </div>
+  );
+}
+
+function WorkTripExpenseInput({
+  valueInGhs,
+  rate,
+  onChange,
+  placeholder,
+  currencySymbol,
+  icon: Icon,
+  label
+}: {
+  valueInGhs: string | undefined;
+  rate: number;
+  onChange: (v: string) => void;
+  placeholder: string;
+  currencySymbol: string;
+  icon: any;
+  label: string;
+}) {
+  const [localVal, setLocalVal] = useState('');
+
+  useEffect(() => {
+    if (valueInGhs) {
+      const converted = (parseFloat(valueInGhs) * rate);
+      const str = converted.toFixed(2).replace(/\.?0+$/, '');
+      if (parseFloat(localVal || '0') !== converted) {
+        setLocalVal(str);
+      }
+    } else {
+      setLocalVal('');
+    }
+  }, [valueInGhs, rate]);
+
+  return (
+    <div className="space-y-1">
+      <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase flex items-center gap-2 px-1">
+        <Icon size={14} className="text-violet-500" /> {label}
+      </label>
+      <div className="relative">
+        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-lg font-bold text-slate-400">{currencySymbol}</span>
+        <input 
+          type="number"
+          step="any"
+          value={localVal}
+          onChange={(e) => {
+            setLocalVal(e.target.value);
+            const num = parseFloat(e.target.value);
+            if (!isNaN(num)) {
+              onChange((num / rate).toString());
+            } else if (e.target.value === '') {
+              onChange('');
+            }
+          }}
+          placeholder={placeholder}
+          className="w-full pl-10 pr-4 py-3 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl text-lg font-black text-slate-900 dark:text-white outline-none focus:border-violet-400 dark:focus:border-violet-600 transition-colors shadow-sm"
+        />
+      </div>
+    </div>
+  );
+}
+
 const CustomTooltip = ({ active, payload, currentSymbol, currentDate, trackingMode }: any) => {
   if (active && payload && payload.length) {
     const data = payload[0].payload;
@@ -1281,85 +1395,45 @@ export default function App() {
                             </div>
                           ) : isWorkTrip ? (
                             <div className="space-y-4">
-                              <div className="space-y-1">
-                                <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase flex items-center gap-2 px-1">
-                                  <Home size={14} className="text-violet-500" /> Accommodation
-                                </label>
-                                <div className="relative">
-                                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-lg font-bold text-slate-400">{currentSymbol}</span>
-                                  <input 
-                                    type="number"
-                                    step="any"
-                                    value={dayFare.wtAccommodation ? (parseFloat(dayFare.wtAccommodation) * currentRate).toFixed(2).replace(/\.?0+$/, '') : ''}
-                                    onChange={(e) => {
-                                      const val = e.target.value === '' ? '' : (parseFloat(e.target.value) / currentRate).toString();
-                                      handleWorkTripExpenseChange(currentDate, 'wtAccommodation', val);
-                                    }}
-                                    placeholder="0.00"
-                                    className="w-full pl-10 pr-4 py-3 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl text-lg font-black text-slate-900 dark:text-white outline-none focus:border-violet-400 dark:focus:border-violet-600 transition-all shadow-sm"
-                                  />
-                                </div>
-                              </div>
+                              <WorkTripExpenseInput
+                                valueInGhs={dayFare.wtAccommodation}
+                                rate={currentRate}
+                                onChange={(val) => handleWorkTripExpenseChange(currentDate, 'wtAccommodation', val)}
+                                placeholder="0.00"
+                                currencySymbol={currentSymbol}
+                                icon={Home}
+                                label="Accommodation"
+                              />
 
-                              <div className="space-y-1">
-                                <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase flex items-center gap-2 px-1">
-                                  <Utensils size={14} className="text-violet-500" /> Food & Snacks
-                                </label>
-                                <div className="relative">
-                                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-lg font-bold text-slate-400">{currentSymbol}</span>
-                                  <input 
-                                    type="number"
-                                    step="any"
-                                    value={dayFare.wtFood ? (parseFloat(dayFare.wtFood) * currentRate).toFixed(2).replace(/\.?0+$/, '') : ''}
-                                    onChange={(e) => {
-                                      const val = e.target.value === '' ? '' : (parseFloat(e.target.value) / currentRate).toString();
-                                      handleWorkTripExpenseChange(currentDate, 'wtFood', val);
-                                    }}
-                                    placeholder="0.00"
-                                    className="w-full pl-10 pr-4 py-3 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl text-lg font-black text-slate-900 dark:text-white outline-none focus:border-violet-400 dark:focus:border-violet-600 transition-all shadow-sm"
-                                  />
-                                </div>
-                              </div>
+                              <WorkTripExpenseInput
+                                valueInGhs={dayFare.wtFood}
+                                rate={currentRate}
+                                onChange={(val) => handleWorkTripExpenseChange(currentDate, 'wtFood', val)}
+                                placeholder="0.00"
+                                currencySymbol={currentSymbol}
+                                icon={Utensils}
+                                label="Food & Snacks"
+                              />
 
-                              <div className="space-y-1">
-                                <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase flex items-center gap-2 px-1">
-                                  <Droplet size={14} className="text-violet-500" /> Water & Drinks
-                                </label>
-                                <div className="relative">
-                                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-lg font-bold text-slate-400">{currentSymbol}</span>
-                                  <input 
-                                    type="number"
-                                    step="any"
-                                    value={dayFare.wtWater ? (parseFloat(dayFare.wtWater) * currentRate).toFixed(2).replace(/\.?0+$/, '') : ''}
-                                    onChange={(e) => {
-                                      const val = e.target.value === '' ? '' : (parseFloat(e.target.value) / currentRate).toString();
-                                      handleWorkTripExpenseChange(currentDate, 'wtWater', val);
-                                    }}
-                                    placeholder="0.00"
-                                    className="w-full pl-10 pr-4 py-3 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl text-lg font-black text-slate-900 dark:text-white outline-none focus:border-violet-400 dark:focus:border-violet-600 transition-all shadow-sm"
-                                  />
-                                </div>
-                              </div>
+                              <WorkTripExpenseInput
+                                valueInGhs={dayFare.wtWater}
+                                rate={currentRate}
+                                onChange={(val) => handleWorkTripExpenseChange(currentDate, 'wtWater', val)}
+                                placeholder="0.00"
+                                currencySymbol={currentSymbol}
+                                icon={Droplet}
+                                label="Water & Drinks"
+                              />
 
-                              <div className="space-y-1">
-                                <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase flex items-center gap-2 px-1">
-                                  <Receipt size={14} className="text-violet-500" /> Miscellaneous Expense
-                                </label>
-                                <div className="relative">
-                                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-lg font-bold text-slate-400">{currentSymbol}</span>
-                                  <input 
-                                    type="number"
-                                    step="any"
-                                    value={dayFare.wtMisc ? (parseFloat(dayFare.wtMisc) * currentRate).toFixed(2).replace(/\.?0+$/, '') : ''}
-                                    onChange={(e) => {
-                                      const val = e.target.value === '' ? '' : (parseFloat(e.target.value) / currentRate).toString();
-                                      handleWorkTripExpenseChange(currentDate, 'wtMisc', val);
-                                    }}
-                                    placeholder="0.00"
-                                    className="w-full pl-10 pr-4 py-3 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-xl text-lg font-black text-slate-900 dark:text-white outline-none focus:border-violet-400 dark:focus:border-violet-600 transition-all shadow-sm"
-                                  />
-                                </div>
-                              </div>
+                              <WorkTripExpenseInput
+                                valueInGhs={dayFare.wtMisc}
+                                rate={currentRate}
+                                onChange={(val) => handleWorkTripExpenseChange(currentDate, 'wtMisc', val)}
+                                placeholder="0.00"
+                                currencySymbol={currentSymbol}
+                                icon={Receipt}
+                                label="Miscellaneous Expense"
+                              />
 
                               <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex justify-between items-center">
                                   <span className="font-bold text-slate-500">Trip Expenditure</span>
