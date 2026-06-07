@@ -122,6 +122,19 @@ interface MonthlyFares {
 
 const STORAGE_KEY = 'transport_fares_data';
 
+function sanitizeFareData(fare: DayFare): Partial<DayFare> {
+  const cleaned: Partial<DayFare> = {};
+  if (fare.morning !== undefined) cleaned.morning = fare.morning;
+  if (fare.evening !== undefined) cleaned.evening = fare.evening;
+  if (fare.crossedOut !== undefined) cleaned.crossedOut = fare.crossedOut;
+  if (fare.isWorkTrip !== undefined) cleaned.isWorkTrip = fare.isWorkTrip;
+  if (fare.wtAccommodation !== undefined) cleaned.wtAccommodation = fare.wtAccommodation;
+  if (fare.wtFood !== undefined) cleaned.wtFood = fare.wtFood;
+  if (fare.wtWater !== undefined) cleaned.wtWater = fare.wtWater;
+  if (fare.wtMisc !== undefined) cleaned.wtMisc = fare.wtMisc;
+  return cleaned;
+}
+
 const CURRENCY_SYMBOLS: Record<string, string> = {
   'GHS': '₵',
   'USD': '$',
@@ -405,7 +418,7 @@ export default function App() {
     const fareDocPath = `users/${uid}/fares`;
     const promises = Object.entries(localFares).map(([dateKey, fare]) => {
       return setDoc(doc(db, fareDocPath, dateKey), {
-        ...fare,
+        ...sanitizeFareData(fare),
         userId: uid,
         updatedAt: serverTimestamp()
       });
@@ -612,7 +625,7 @@ export default function App() {
       if (user) {
         const fareDocPath = `users/${user.uid}/fares`;
         setDoc(doc(db, fareDocPath, dateKey), {
-          ...updated,
+          ...sanitizeFareData(updated),
           userId: user.uid,
           updatedAt: serverTimestamp()
         }).catch(err => handleFirestoreError(err, OperationType.WRITE, fareDocPath));
@@ -645,7 +658,7 @@ export default function App() {
       if (user) {
         const fareDocPath = `users/${user.uid}/fares`;
         setDoc(doc(db, fareDocPath, dateKey), {
-          ...updated,
+          ...sanitizeFareData(updated),
           userId: user.uid,
           updatedAt: serverTimestamp()
         }).catch(err => handleFirestoreError(err, OperationType.WRITE, fareDocPath));
@@ -694,7 +707,7 @@ export default function App() {
       if (user) {
         const fareDocPath = `users/${user.uid}/fares`;
         setDoc(doc(db, fareDocPath, dateKey), {
-          ...updated,
+          ...sanitizeFareData(updated),
           userId: user.uid,
           updatedAt: serverTimestamp()
         }).catch(err => handleFirestoreError(err, OperationType.WRITE, fareDocPath));
@@ -724,7 +737,7 @@ export default function App() {
       if (user) {
         const fareDocPath = `users/${user.uid}/fares`;
         setDoc(doc(db, fareDocPath, dateKey), {
-          ...updated,
+          ...sanitizeFareData(updated),
           userId: user.uid,
           updatedAt: serverTimestamp()
         }).catch(err => handleFirestoreError(err, OperationType.WRITE, fareDocPath));
