@@ -61,9 +61,10 @@ import {
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { ComposedChart, Line, Bar, Tooltip, ResponsiveContainer, ReferenceLine, XAxis, YAxis, CartesianGrid } from 'recharts';
+import { ComposedChart, Line, Bar, Tooltip, ResponsiveContainer, XAxis, YAxis, CartesianGrid } from 'recharts';
 import * as XLSX from 'xlsx';
 import Holidays from 'date-holidays';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   auth, 
   db, 
@@ -109,29 +110,40 @@ interface DayFare {
   morning: string;
   evening: string;
   crossedOut?: boolean;
-  isWorkTrip?: boolean;
-  wtAccommodation?: string;
-  wtFood?: string;
-  wtWater?: string;
-  wtMisc?: string;
 }
 
 interface MonthlyFares {
   [dateKey: string]: DayFare;
 }
 
+interface WorkTripDay {
+  accommodation: string;
+  food: string;
+  water: string;
+  misc: string;
+}
+
+interface MonthlyWorkTrips {
+  [dateKey: string]: WorkTripDay;
+}
+
 const STORAGE_KEY = 'transport_fares_data';
+const WORKTRIP_STORAGE_KEY = 'worktrip_expenses_data';
 
 function sanitizeFareData(fare: DayFare): Partial<DayFare> {
   const cleaned: Partial<DayFare> = {};
   if (fare.morning !== undefined) cleaned.morning = fare.morning;
   if (fare.evening !== undefined) cleaned.evening = fare.evening;
   if (fare.crossedOut !== undefined) cleaned.crossedOut = fare.crossedOut;
-  if (fare.isWorkTrip !== undefined) cleaned.isWorkTrip = fare.isWorkTrip;
-  if (fare.wtAccommodation !== undefined) cleaned.wtAccommodation = fare.wtAccommodation;
-  if (fare.wtFood !== undefined) cleaned.wtFood = fare.wtFood;
-  if (fare.wtWater !== undefined) cleaned.wtWater = fare.wtWater;
-  if (fare.wtMisc !== undefined) cleaned.wtMisc = fare.wtMisc;
+  return cleaned;
+}
+
+function sanitizeWorkTripData(trip: WorkTripDay): Partial<WorkTripDay> {
+  const cleaned: Partial<WorkTripDay> = {};
+  if (trip.accommodation !== undefined) cleaned.accommodation = trip.accommodation;
+  if (trip.food !== undefined) cleaned.food = trip.food;
+  if (trip.water !== undefined) cleaned.water = trip.water;
+  if (trip.misc !== undefined) cleaned.misc = trip.misc;
   return cleaned;
 }
 
@@ -342,8 +354,8 @@ const CustomTooltip = ({ active, payload, currentSymbol, currentDate, trackingMo
                 <span className="font-bold text-slate-700 dark:text-slate-300">{currentSymbol}{(data.wtMisc || 0).toFixed(2)}</span>
               </div>
               <div className="flex justify-between gap-4 text-xs mt-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-                <span className="font-bold text-violet-650">Trip Total</span>
-                <span className="font-black text-violet-700 dark:text-violet-300">{currentSymbol}{(data.wtTotal || 0).toFixed(2)}</span>
+                <span className="font-bold text-violet-600">Trip Total</span>
+                <span className="font-black text-violet-700 dark:text-violet-400">{currentSymbol}{(data.wtTotal || 0).toFixed(2)}</span>
               </div>
             </div>
           ) : (
@@ -393,6 +405,11 @@ export default function App() {
   
   const [fares, setFares] = useState<MonthlyFares>(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
+    return saved ? JSON.parse(saved) : {};
+  });
+
+  const [worktrips, setWorktrips] = useState<MonthlyWorkTrips>(() => {
+    const saved = localStorage.getItem(WORKTRIP_STORAGE_KEY);
     return saved ? JSON.parse(saved) : {};
   });
 
@@ -459,9 +476,6 @@ export default function App() {
   }, []);
 
   const getIsCrossedOut = useCallback((day: Date, dayFare: DayFare | undefined) => {
-    if (dayFare?.isWorkTrip) {
-      return false;
-    }
     if (dayFare && dayFare.crossedOut !== undefined) {
       return dayFare.crossedOut;
     }
@@ -506,13 +520,14 @@ export default function App() {
     // Listen to all user fares
     const faresPath = `users/${user.uid}/fares`;
     const unsubFares = onSnapshot(query(collection(db, faresPath), where('userId', '==', user.uid)), (snapshot) => {
+      if (snapshot.metadata.hasPendingWrites) {
+        return; // ignore self changes returning before they officially settle, keeping inputs safe
+      }
       const data: MonthlyFares = {};
-      snapshot.forEach(doc => {
-        data[doc.id] = doc.data() as DayFare;
+      snapshot.forEach(docSnap => {
+        data[docSnap.id] = docSnap.data() as DayFare;
       });
       setFares(prev => {
-        // Merge cloud with local to not overwrite completely immediately, or just take cloud
-        // For simplicity, let's take cloud state as source of truth for all synced days
         return { ...prev, ...data };
       });
     }, (err) => {
@@ -521,35 +536,35 @@ export default function App() {
       }
     });
 
+    // Listen to all user worktrips
+    const worktripsPath = `users/${user.uid}/worktrips`;
+    const unsubWorktrips = onSnapshot(query(collection(db, worktripsPath), where('userId', '==', user.uid)), (snapshot) => {
+      if (snapshot.metadata.hasPendingWrites) {
+        return; // ignore self changes returning before they officially settle, keeping inputs safe
+      }
+      const data: MonthlyWorkTrips = {};
+      snapshot.forEach(docSnap => {
+        data[docSnap.id] = docSnap.data() as WorkTripDay;
+      });
+      setWorktrips(prev => {
+        return { ...prev, ...data };
+      });
+    }, (err) => {
+      if (err.message.includes('permission')) {
+        handleFirestoreError(err, OperationType.LIST, worktripsPath);
+      }
+    });
+
     return () => {
       unsubPrefs();
       unsubFares();
+      unsubWorktrips();
     };
   }, [user]);
-
-  // Handle Login/Logout
-  const syncLocalDataToCloud = async (uid: string, localFares: MonthlyFares) => {
-    const fareDocPath = `users/${uid}/fares`;
-    const promises = Object.entries(localFares).map(([dateKey, fare]) => {
-      return setDoc(doc(db, fareDocPath, dateKey), {
-        ...sanitizeFareData(fare),
-        userId: uid,
-        updatedAt: serverTimestamp()
-      });
-    });
-    try {
-      await Promise.all(promises);
-      console.log("Successfully synced local data to cloud");
-    } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, fareDocPath);
-    }
-  };
 
   const handleLogin = async () => {
     try {
       await signInWithPopup(auth, googleProvider);
-      // No longer automatically syncing local data to cloud on login
-      // Local data will be merged with cloud data via the onSnapshot listener
     } catch (err: any) {
       console.error("Login failed", err);
       if (err.code === 'auth/unauthorized-domain') {
@@ -563,7 +578,10 @@ export default function App() {
   const handleLogout = async () => {
     try {
       await signOut(auth);
-      setFares({}); // Clear out on logout or keep local? We might keep local. Let's rely on local storage.
+      setFares({});
+      setWorktrips({});
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(WORKTRIP_STORAGE_KEY);
     } catch (err) {
       console.error("Logout failed", err);
     }
@@ -599,7 +617,12 @@ export default function App() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(fares));
   }, [fares]);
 
-  // Auto-populate recurring fares (current week only) & mark past empty days as "no work"
+  // Save to localStorage whenever worktrips change
+  useEffect(() => {
+    localStorage.setItem(WORKTRIP_STORAGE_KEY, JSON.stringify(worktrips));
+  }, [worktrips]);
+
+  // Auto-populate recurring fares (current week only) & mark past empty days as "no work" for Transit only
   useEffect(() => {
     let updated = false;
     const newFares = { ...fares };
@@ -620,7 +643,6 @@ export default function App() {
       
       if (!newFares[dateKey]) {
         if (isPast) {
-          // Rule 1: Set previous dates with no values to "no work"
           newFares[dateKey] = {
             morning: '0',
             evening: '0',
@@ -628,7 +650,6 @@ export default function App() {
           };
           updated = true;
         } else if ((recurringMorning || recurringEvening) && isWithinInterval(day, { start: weekStart, end: weekEnd })) {
-          // Rule 2: Recurring cost only for work days in the CURRENT week
           if (!isWeekend && !holidayInfo.isHoliday) {
             newFares[dateKey] = {
               morning: recurringMorning,
@@ -718,9 +739,7 @@ export default function App() {
     }
   };
 
-  const handleNextMonth = handleNext;
-  const handlePrevMonth = handlePrev;
-
+  // handlers for Transit Mode
   const handleFareChange = (date: Date, type: 'morning' | 'evening', value: string) => {
     const dateKey = format(date, 'yyyy-MM-dd');
     setFares(prev => {
@@ -759,11 +778,6 @@ export default function App() {
         crossedOut: !currentlyCrossedOut
       };
 
-      // if crossedOut, disable work trip
-      if (updated.crossedOut) {
-        updated.isWorkTrip = false;
-      }
-
       const newState = {
         ...prev,
         [dateKey]: updated
@@ -782,7 +796,7 @@ export default function App() {
     });
   };
 
-  const handleSetDayStatus = (date: Date, status: 'regular' | 'off' | 'worktrip') => {
+  const handleSetDayStatus = (date: Date, status: 'regular' | 'off') => {
     const dateKey = format(date, 'yyyy-MM-dd');
     setFares(prev => {
       const current = prev[dateKey] || { morning: '', evening: '' };
@@ -790,27 +804,10 @@ export default function App() {
       
       if (status === 'regular') {
         updated.crossedOut = false;
-        updated.isWorkTrip = false;
-        // clear expenses
-        updated.wtAccommodation = '';
-        updated.wtFood = '';
-        updated.wtWater = '';
-        updated.wtMisc = '';
       } else if (status === 'off') {
         updated.crossedOut = true;
-        updated.isWorkTrip = false;
         updated.morning = '0';
         updated.evening = '0';
-        // clear expenses
-        updated.wtAccommodation = '';
-        updated.wtFood = '';
-        updated.wtWater = '';
-        updated.wtMisc = '';
-      } else if (status === 'worktrip') {
-        updated.crossedOut = false;
-        updated.isWorkTrip = true;
-        updated.morning = '';
-        updated.evening = '';
       }
 
       const newState = {
@@ -830,17 +827,14 @@ export default function App() {
     });
   };
 
-  const handleWorkTripExpenseChange = (date: Date, field: 'wtAccommodation' | 'wtFood' | 'wtWater' | 'wtMisc', value: string) => {
+  // handlers for Work Trip Mode
+  const handleWorkTripChange = (date: Date, field: 'accommodation' | 'food' | 'water' | 'misc', value: string) => {
     const dateKey = format(date, 'yyyy-MM-dd');
-    setFares(prev => {
-      const current = prev[dateKey] || { morning: '', evening: '' };
+    setWorktrips(prev => {
+      const current = prev[dateKey] || { accommodation: '', food: '', water: '', misc: '' };
       const updated = {
         ...current,
-        [field]: value,
-        isWorkTrip: true,
-        crossedOut: false,
-        morning: '',
-        evening: ''
+        [field]: value
       };
       
       const newState = {
@@ -849,68 +843,33 @@ export default function App() {
       };
       
       if (user) {
-        const fareDocPath = `users/${user.uid}/fares`;
-        setDoc(doc(db, fareDocPath, dateKey), {
-          ...sanitizeFareData(updated),
+        const worktripsDocPath = `users/${user.uid}/worktrips`;
+        setDoc(doc(db, worktripsDocPath, dateKey), {
+          ...sanitizeWorkTripData(updated),
           userId: user.uid,
           updatedAt: serverTimestamp()
-        }).catch(err => handleFirestoreError(err, OperationType.WRITE, fareDocPath));
+        }).catch(err => handleFirestoreError(err, OperationType.WRITE, worktripsDocPath));
       }
       return newState;
     });
   };
 
-  const { 
-    totalThisMonth, 
-    avgDaily, 
-    chartData, 
-    activeDaysCount, 
-    forecast,
-    workTripDaysThisMonth,
-    workTripTotalThisMonth,
-    wtAccommodationTotal,
-    wtFoodTotal,
-    wtWaterTotal,
-    wtMiscTotal
-  } = useMemo(() => {
+  // --- Calculations for Analytics ---
+  const transitAnalytics = useMemo(() => {
     const daysInMonth = eachDayOfInterval({ start: monthStart, end: monthEnd });
     let total = 0;
     let activeDays = 0;
     
-    let wtDays = 0;
-    let wtTotal = 0;
-    let wtAccommodationSum = 0;
-    let wtFoodSum = 0;
-    let wtWaterSum = 0;
-    let wtMiscSum = 0;
-    
-    // First pass to get total and active days correctly
     daysInMonth.forEach(day => {
       const dateKey = format(day, 'yyyy-MM-dd');
       const dayFare = fares[dateKey];
-      
       if (dayFare) {
         const crossedOut = getIsCrossedOut(day, dayFare);
-        const isWorkTrip = dayFare.isWorkTrip || false;
-        
-        if (!crossedOut && !isWorkTrip) {
+        if (!crossedOut) {
           const morning = parseFloat(dayFare.morning) || 0;
           const evening = parseFloat(dayFare.evening) || 0;
           if (morning + evening > 0) activeDays++;
           total += (morning + evening) * currentRate;
-        } else if (isWorkTrip) {
-          wtDays++;
-          const accommodation = parseFloat(dayFare.wtAccommodation) || 0;
-          const food = parseFloat(dayFare.wtFood) || 0;
-          const water = parseFloat(dayFare.wtWater) || 0;
-          const misc = parseFloat(dayFare.wtMisc) || 0;
-          
-          wtAccommodationSum += accommodation * currentRate;
-          wtFoodSum += food * currentRate;
-          wtWaterSum += water * currentRate;
-          wtMiscSum += misc * currentRate;
-          
-          wtTotal += (accommodation + food + water + misc) * currentRate;
         }
       }
     });
@@ -918,49 +877,25 @@ export default function App() {
     const avg = activeDays > 0 ? total / activeDays : 0;
 
     let cumulative = 0;
-    let cumulativeWt = 0;
     const chart = daysInMonth.map(day => {
       const dateKey = format(day, 'yyyy-MM-dd');
       const dayFare = fares[dateKey];
       const crossedOut = getIsCrossedOut(day, dayFare);
-      const isWorkTrip = dayFare?.isWorkTrip || false;
       
       let dayTotalGhs = 0;
       let mParsed = 0;
       let eParsed = 0;
       
-      let dayWtGhs = 0;
-      let wtAcc = 0;
-      let wtFd = 0;
-      let wtWt = 0;
-      let wtMc = 0;
-      
       if (dayFare && !crossedOut) {
-        if (!isWorkTrip) {
-          const morning = parseFloat(dayFare.morning) || 0;
-          const evening = parseFloat(dayFare.evening) || 0;
-          mParsed = morning * currentRate;
-          eParsed = evening * currentRate;
-          dayTotalGhs = morning + evening;
-        } else {
-          const accommodation = parseFloat(dayFare.wtAccommodation) || 0;
-          const food = parseFloat(dayFare.wtFood) || 0;
-          const water = parseFloat(dayFare.wtWater) || 0;
-          const misc = parseFloat(dayFare.wtMisc) || 0;
-          
-          wtAcc = accommodation * currentRate;
-          wtFd = food * currentRate;
-          wtWt = water * currentRate;
-          wtMc = misc * currentRate;
-          
-          dayWtGhs = accommodation + food + water + misc;
-        }
+        const morning = parseFloat(dayFare.morning) || 0;
+        const evening = parseFloat(dayFare.evening) || 0;
+        mParsed = morning * currentRate;
+        eParsed = evening * currentRate;
+        dayTotalGhs = morning + evening;
       }
       
       const dayTotalSelected = dayTotalGhs * currentRate;
-      const dayWtSelected = dayWtGhs * currentRate;
       cumulative += dayTotalSelected;
-      cumulativeWt += dayWtSelected;
       
       return {
         date: format(day, 'd'),
@@ -969,28 +904,19 @@ export default function App() {
         average: avg,
         morningParsed: mParsed,
         eveningParsed: eParsed,
-        
-        // work trip values
-        wtTotal: dayWtSelected,
-        wtCumulative: cumulativeWt,
-        wtAccommodation: wtAcc,
-        wtFood: wtFd,
-        wtWater: wtWt,
-        wtMisc: wtMc
       };
     });
 
     const today = new Date();
-    // Forecast if current month is selected
     let currentForecast = total;
     if (isSameMonth(currentDate, today)) {
         const passedWorkDays = daysInMonth.filter(d => {
           const dk = format(d, 'yyyy-MM-dd');
-          return d <= today && !getIsCrossedOut(d, fares[dk]) && !fares[dk]?.isWorkTrip;
+          return d <= today && !getIsCrossedOut(d, fares[dk]);
         }).length;
         const totalWorkDays = daysInMonth.filter(d => {
           const dk = format(d, 'yyyy-MM-dd');
-          return !getIsCrossedOut(d, fares[dk]) && !fares[dk]?.isWorkTrip;
+          return !getIsCrossedOut(d, fares[dk]);
         }).length;
         
         const avgPerWorkDay = passedWorkDays > 0 ? total / passedWorkDays : 0;
@@ -1003,59 +929,144 @@ export default function App() {
       chartData: chart,
       activeDaysCount: activeDays,
       forecast: currentForecast,
+    };
+  }, [fares, monthStart, monthEnd, currentDate, currentRate, getIsCrossedOut]);
+
+  const workTripAnalytics = useMemo(() => {
+    const daysInMonth = eachDayOfInterval({ start: monthStart, end: monthEnd });
+    let wtTotal = 0;
+    let wtDays = 0;
+    let wtAccommodationSum = 0;
+    let wtFoodSum = 0;
+    let wtWaterSum = 0;
+    let wtMiscSum = 0;
+
+    daysInMonth.forEach(day => {
+      const dateKey = format(day, 'yyyy-MM-dd');
+      const trip = worktrips[dateKey];
+      if (trip) {
+        const accommodation = parseFloat(trip.accommodation) || 0;
+        const food = parseFloat(trip.food) || 0;
+        const water = parseFloat(trip.water) || 0;
+        const misc = parseFloat(trip.misc) || 0;
+        
+        const sum = accommodation + food + water + misc;
+        if (sum > 0) {
+          wtDays++;
+          wtAccommodationSum += accommodation * currentRate;
+          wtFoodSum += food * currentRate;
+          wtWaterSum += water * currentRate;
+          wtMiscSum += misc * currentRate;
+          wtTotal += sum * currentRate;
+        }
+      }
+    });
+
+    let cumulativeWt = 0;
+    const chart = daysInMonth.map(day => {
+      const dateKey = format(day, 'yyyy-MM-dd');
+      const trip = worktrips[dateKey];
       
-      // Work Trip outputs
+      let wtAcc = 0;
+      let wtFd = 0;
+      let wtWt = 0;
+      let wtMc = 0;
+      let dayWtGhs = 0;
+
+      if (trip) {
+        const accommodation = parseFloat(trip.accommodation) || 0;
+        const food = parseFloat(trip.food) || 0;
+        const water = parseFloat(trip.water) || 0;
+        const misc = parseFloat(trip.misc) || 0;
+        
+        wtAcc = accommodation * currentRate;
+        wtFd = food * currentRate;
+        wtWt = water * currentRate;
+        wtMc = misc * currentRate;
+        dayWtGhs = accommodation + food + water + misc;
+      }
+
+      const dayWtSelected = dayWtGhs * currentRate;
+      cumulativeWt += dayWtSelected;
+
+      return {
+        date: format(day, 'd'),
+        wtTotal: dayWtSelected,
+        wtCumulative: cumulativeWt,
+        wtAccommodation: wtAcc,
+        wtFood: wtFd,
+        wtWater: wtWt,
+        wtMisc: wtMc
+      };
+    });
+
+    return {
       workTripDaysThisMonth: wtDays,
       workTripTotalThisMonth: wtTotal,
       wtAccommodationTotal: wtAccommodationSum,
       wtFoodTotal: wtFoodSum,
       wtWaterTotal: wtWaterSum,
-      wtMiscTotal: wtMiscSum
+      wtMiscTotal: wtMiscSum,
+      chartData: chart
     };
-  }, [fares, monthStart, monthEnd, currentDate, currentRate]);
+  }, [worktrips, monthStart, monthEnd, currentRate]);
 
   const exportToExcel = () => {
     const daysInMonth = eachDayOfInterval({ start: monthStart, end: monthEnd });
     
-    const data = daysInMonth.map(day => {
-      const dateKey = format(day, 'yyyy-MM-dd');
-      const dayFare = fares[dateKey] || { morning: '', evening: '' };
-      const crossedOut = getIsCrossedOut(day, dayFare);
-      const isWorkTrip = dayFare.isWorkTrip || false;
-      
-      const m = crossedOut || isWorkTrip ? 0 : (parseFloat(dayFare.morning) || 0) * currentRate;
-      const e = crossedOut || isWorkTrip ? 0 : (parseFloat(dayFare.evening) || 0) * currentRate;
-      
-      const acc = isWorkTrip ? (parseFloat(dayFare.wtAccommodation) || 0) * currentRate : 0;
-      const fd = isWorkTrip ? (parseFloat(dayFare.wtFood) || 0) * currentRate : 0;
-      const wt = isWorkTrip ? (parseFloat(dayFare.wtWater) || 0) * currentRate : 0;
-      const mc = isWorkTrip ? (parseFloat(dayFare.wtMisc) || 0) * currentRate : 0;
-      
-      const tripTotal = acc + fd + wt + mc;
-      
-      let status = 'Regular Workday';
-      if (crossedOut) status = 'Off-Day / Crossed Out';
-      if (isWorkTrip) status = 'Work Trip';
+    if (trackingMode === 'transit') {
+      const data = daysInMonth.map(day => {
+        const dateKey = format(day, 'yyyy-MM-dd');
+        const dayFare = fares[dateKey] || { morning: '', evening: '' };
+        const crossedOut = getIsCrossedOut(day, dayFare);
+        
+        const m = crossedOut ? 0 : (parseFloat(dayFare.morning) || 0) * currentRate;
+        const e = crossedOut ? 0 : (parseFloat(dayFare.evening) || 0) * currentRate;
+        
+        let status = 'Regular Workday';
+        if (crossedOut) status = 'Off-Day / Crossed Out';
 
-      return {
-        Date: format(day, 'MMM dd, yyyy'),
-        'Day of Week': format(day, 'EEEE'),
-        'Status': status,
-        [`Morning Fare (${currentSymbol})`]: m || '',
-        [`Evening Fare (${currentSymbol})`]: e || '',
-        [`Transit Total (${currentSymbol})`]: (m + e) || '',
-        [`Accommodation (${currentSymbol})`]: acc || '',
-        [`Food & Drinks (${currentSymbol})`]: fd || '',
-        [`Water (${currentSymbol})`]: wt || '',
-        [`Misc Expense (${currentSymbol})`]: mc || '',
-        [`Work Trip Total (${currentSymbol})`]: tripTotal || ''
-      };
-    });
+        return {
+          Date: format(day, 'MMM dd, yyyy'),
+          'Day of Week': format(day, 'EEEE'),
+          'Status': status,
+          [`Morning Fare (${currentSymbol})`]: m || '',
+          [`Evening Fare (${currentSymbol})`]: e || '',
+          [`Transit Total (${currentSymbol})`]: (m + e) || '0'
+        };
+      });
 
-    const worksheet = XLSX.utils.json_to_sheet(data);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, format(currentDate, 'MMM yyyy'));
-    XLSX.writeFile(workbook, `Commute_and_Expenses_${format(currentDate, 'MMM_yyyy')}.xlsx`);
+      const worksheet = XLSX.utils.json_to_sheet(data);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, `Transit_${format(currentDate, 'MMM_yyyy')}`);
+      XLSX.writeFile(workbook, `Transit_Commute_${format(currentDate, 'MMM_yyyy')}.xlsx`);
+    } else {
+      const data = daysInMonth.map(day => {
+        const dateKey = format(day, 'yyyy-MM-dd');
+        const trip = worktrips[dateKey] || { accommodation: '', food: '', water: '', misc: '' };
+        
+        const acc = (parseFloat(trip.accommodation) || 0) * currentRate;
+        const fd = (parseFloat(trip.food) || 0) * currentRate;
+        const wt = (parseFloat(trip.water) || 0) * currentRate;
+        const mc = (parseFloat(trip.misc) || 0) * currentRate;
+        const tripTotal = acc + fd + wt + mc;
+
+        return {
+          Date: format(day, 'MMM dd, yyyy'),
+          'Day of Week': format(day, 'EEEE'),
+          [`Accommodation (${currentSymbol})`]: acc || '',
+          [`Food & Snacks (${currentSymbol})`]: fd || '',
+          [`Water & Drinks (${currentSymbol})`]: wt || '',
+          [`Miscellaneous (${currentSymbol})`]: mc || '',
+          [`Work Trip Total (${currentSymbol})`]: tripTotal || ''
+        };
+      });
+
+      const worksheet = XLSX.utils.json_to_sheet(data);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, `Work_Trip_${format(currentDate, 'MMM_yyyy')}`);
+      XLSX.writeFile(workbook, `Work_Trip_Expenses_${format(currentDate, 'MMM_yyyy')}.xlsx`);
+    }
   };
 
   return (
@@ -1084,6 +1095,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-3 flex-wrap">
             <button 
+              id="settings-trigger-btn"
               onClick={() => setShowSettings(true)}
               className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-2.5 rounded-xl shadow-sm text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors relative"
               title="Settings & Reminders"
@@ -1097,8 +1109,9 @@ export default function App() {
         </div>
 
         {/* Tracking Mode Switcher */}
-        <div className="flex bg-slate-200/50 dark:bg-slate-800 p-1 rounded-2xl w-full sm:w-fit mb-6 shadow-inner border border-slate-200/50 dark:border-slate-800/80">
+        <div className="flex bg-slate-200/50 dark:bg-slate-800/60 p-1 rounded-2xl w-full sm:w-fit mb-6 shadow-inner border border-slate-200/50 dark:border-slate-800/80">
           <button
+            id="transit-mode-btn"
             onClick={() => setTrackingMode('transit')}
             className={cn(
               "flex-1 sm:flex-none px-6 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-2",
@@ -1111,6 +1124,7 @@ export default function App() {
             Transit Commute
           </button>
           <button
+            id="worktrip-mode-btn"
             onClick={() => setTrackingMode('worktrip')}
             className={cn(
               "flex-1 sm:flex-none px-6 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-2",
@@ -1128,7 +1142,7 @@ export default function App() {
         <div className={cn("flex-1 grid gap-4 overflow-hidden", isCompactMode ? "grid-cols-1" : "grid-cols-1 md:grid-cols-12 grid-rows-none md:grid-rows-6")}>
           
           {/* Calendar Card (The Core Tracker) */}
-          <div className={cn("bg-white dark:bg-slate-900/80 backdrop-blur-sm rounded-3xl border border-primary-100 dark:border-primary-900 shadow-sm p-4 sm:p-6 flex flex-col transition-colors", isCompactMode ? "col-span-1 min-h-0" : "md:col-span-8 md:row-span-6 overflow-hidden")}>
+          <div className={cn("bg-white dark:bg-slate-900/80 backdrop-blur-sm rounded-3xl border border-primary-100 dark:border-primary-900/50 shadow-sm p-4 sm:p-6 flex flex-col transition-colors", isCompactMode ? "col-span-1 min-h-0" : "md:col-span-8 md:row-span-6 overflow-hidden")}>
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
               <div className="flex items-center gap-2 sm:gap-4 w-full sm:w-auto">
                 <div className="flex items-center gap-1 sm:gap-3">
@@ -1147,7 +1161,7 @@ export default function App() {
                 </div>
                 {isCompactMode && (
                   <div className="text-sm font-semibold text-primary-600 dark:text-primary-400 ml-auto sm:ml-0">
-                    Total: {currentSymbol}{totalThisMonth.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    Total: {currentSymbol}{(trackingMode === 'worktrip' ? workTripAnalytics.workTripTotalThisMonth : transitAnalytics.totalThisMonth).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                 )}
               </div>
@@ -1175,17 +1189,19 @@ export default function App() {
                 ))}
               </div>
 
-              <div className="hidden sm:flex gap-2">
-                <div className="w-3 h-3 rounded-full bg-secondary-100 dark:bg-secondary-900/50 border border-secondary-200 dark:border-secondary-800" title="Morning (AM)"></div>
-                <div className="w-3 h-3 rounded-full bg-primary-100 dark:bg-primary-900/50 border border-primary-200 dark:border-primary-800" title="Evening (PM)"></div>
-              </div>
+              {trackingMode === 'transit' && (
+                <div className="hidden sm:flex gap-2">
+                  <div className="w-3 h-3 rounded-full bg-secondary-100 dark:bg-secondary-900/50 border border-secondary-200 dark:border-secondary-800 hover:scale-110 transition-transform" title="Morning (AM)"></div>
+                  <div className="w-3 h-3 rounded-full bg-primary-100 dark:bg-primary-900/50 border border-primary-200 dark:border-primary-800 hover:scale-110 transition-transform" title="Evening (PM)"></div>
+                </div>
+              )}
             </div>
             
             <div className="overflow-x-auto pb-2 -mx-4 px-4 sm:mx-0 sm:px-0 flex-1">
               {view === 'month' && (
                 <div className="min-w-[550px]">
                   {/* Calendar Header */}
-                  <div className="grid grid-cols-7 mb-2 border-b border-slate-100 dark:border-slate-800 pb-2 transition-colors">
+                  <div className="grid grid-cols-7 mb-2 border-b border-slate-100 dark:border-slate-800 pb-2 transition-colors font-semibold">
                     {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => (
                       <div key={day} className="text-center text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">{day}</div>
                     ))}
@@ -1195,10 +1211,76 @@ export default function App() {
                   <div className="grid grid-cols-7 auto-rows-[minmax(84px,1fr)] md:grid-rows-5 flex-1 gap-1.5 sm:gap-2">
                     {calendarDays.map((day) => {
                       const dateKey = format(day, 'yyyy-MM-dd');
-                      const dayFare = fares[dateKey] || { morning: '', evening: '' };
                       const currentMonth = isSameMonth(day, monthStart);
                       const today = isToday(day);
                       const isWeekend = day.getDay() === 0 || day.getDay() === 6;
+
+                      if (trackingMode === 'worktrip') {
+                        const trip = worktrips[dateKey] || { accommodation: '', food: '', water: '', misc: '' };
+                        const acc = parseFloat(trip.accommodation) || 0;
+                        const fd = parseFloat(trip.food) || 0;
+                        const wt = parseFloat(trip.water) || 0;
+                        const mc = parseFloat(trip.misc) || 0;
+                        const tripDayTotal = (acc + fd + wt + mc) * currentRate;
+                        const hasExpenses = tripDayTotal > 0;
+
+                        return (
+                          <div
+                            key={dateKey}
+                            onClick={() => {
+                              if (currentMonth) {
+                                setCurrentDate(day);
+                                setView('day');
+                              }
+                            }}
+                            className={cn(
+                              "border rounded-xl p-1 sm:p-2 flex flex-col justify-between transition-all relative overflow-hidden select-none cursor-pointer",
+                              !currentMonth ? "border-transparent bg-slate-50/20 dark:bg-slate-900/10 opacity-30 cursor-default" :
+                              (hasExpenses 
+                                ? "border-violet-250 dark:border-violet-900/60 bg-violet-50/20 dark:bg-violet-950/10 hover:border-violet-350 hover:bg-violet-50/30 shadow-sm" 
+                                : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-violet-300 dark:hover:border-violet-600 shadow-sm"),
+                              today && "border-violet-400 dark:border-violet-500 ring-4 ring-violet-50 dark:ring-violet-900/20"
+                            )}
+                          >
+                            <div className="flex justify-between items-center mb-1">
+                              <span className={cn(
+                                "text-[10px] sm:text-xs font-bold",
+                                today ? "text-violet-600 dark:text-violet-400" : (isWeekend && currentMonth ? "text-slate-400 dark:text-slate-500" : "text-slate-600 dark:text-slate-300"),
+                                !currentMonth && "text-slate-350 dark:text-slate-650"
+                              )}>
+                                {format(day, 'dd')}{today && <span className="hidden sm:inline"> Today</span>}
+                              </span>
+                              {hasExpenses && currentMonth && (
+                                <span className="w-2 h-2 rounded-full bg-violet-500 animate-pulse" />
+                              )}
+                            </div>
+
+                            {currentMonth && (
+                              <div className="space-y-1 mt-auto flex-1 flex flex-col justify-end">
+                                {hasExpenses ? (
+                                  <div className="py-1 px-1.5 bg-violet-100/50 dark:bg-violet-950/30 border border-violet-105 dark:border-violet-900/40 rounded-lg text-slate-800 dark:text-slate-205">
+                                    <div className="flex items-center gap-1 text-[8px] font-black text-violet-750 dark:text-violet-300 uppercase tracking-wide">
+                                      <Briefcase size={9} strokeWidth={3} />
+                                      <span>Expenses</span>
+                                    </div>
+                                    <div className="text-right text-[11px] sm:text-xs font-black text-violet-850 dark:text-violet-200 mt-0.5">
+                                      {currentSymbol}{tripDayTotal.toFixed(2)}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="text-[10px] text-slate-400 dark:text-slate-600 italic text-center py-2">
+                                    Empty
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      }
+
+                      // Otherwise, regular transit mode
+                      const dayFare = fares[dateKey] || { morning: '', evening: '' };
+                      const crossedOut = getIsCrossedOut(day, dayFare);
 
                       return (
                         <div
@@ -1206,18 +1288,16 @@ export default function App() {
                           className={cn(
                             "border rounded-xl p-1 sm:p-2 flex flex-col justify-between transition-colors relative overflow-hidden",
                             !currentMonth ? "border-transparent bg-slate-50/50 dark:bg-slate-900/40 opacity-40 grayscale" : 
-                            (dayFare?.isWorkTrip 
-                              ? "border-violet-200 dark:border-violet-900/60 bg-violet-50/20 dark:bg-violet-950/10 hover:border-violet-300" 
-                              : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-primary-300 dark:hover:border-primary-600 shadow-sm"),
+                            "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-primary-300 dark:hover:border-primary-600 shadow-sm",
                             today && "border-primary-400 dark:border-primary-500 ring-4 ring-primary-50 dark:ring-primary-900/20",
-                            getIsCrossedOut(day, dayFare) && "opacity-75 grayscale bg-slate-50/80 dark:bg-slate-900/80"
+                            crossedOut && "opacity-75 grayscale bg-slate-50/80 dark:bg-slate-900/80"
                           )}
                         >
                           <div className="flex justify-between items-center mb-1">
                             <span className={cn(
                               "text-[10px] sm:text-xs font-bold",
                               today ? "text-primary-600 dark:text-primary-400" : (isWeekend && currentMonth ? "text-slate-400 dark:text-slate-500" : "text-slate-600 dark:text-slate-300"),
-                              (!currentMonth || getIsCrossedOut(day, dayFare)) && "text-slate-400 dark:text-slate-600"
+                              (!currentMonth || crossedOut) && "text-slate-400 dark:text-slate-600"
                             )}>
                               {format(day, 'dd')}{today && <span className="hidden sm:inline"> Today</span>}
                             </span>
@@ -1230,7 +1310,7 @@ export default function App() {
                                   onClick={() => handleToggleCrossOut(day)}
                                   className={cn(
                                     "p-0.5 rounded transition-colors",
-                                    getIsCrossedOut(day, dayFare) ? "text-red-500 hover:text-red-600" : "text-slate-300 hover:text-red-400 dark:text-slate-600 dark:hover:text-red-400"
+                                    crossedOut ? "text-red-500 hover:text-red-600" : "text-slate-300 hover:text-red-400 dark:text-slate-600 dark:hover:text-red-400"
                                   )}
                                   title="Cross out off-days"
                                 >
@@ -1242,72 +1322,43 @@ export default function App() {
 
                           {currentMonth && (
                             <div className="space-y-1 mt-auto flex-1 flex flex-col justify-end">
-                              {getIsCrossedOut(day, dayFare) && (
+                              {crossedOut && (
                                 <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
                                   <div className="absolute w-[120%] h-[2px] bg-red-400/30 -rotate-[25deg]"></div>
-                                  <span className="text-[10px] sm:text-xs font-black text-red-500/60 dark:text-red-400/60 uppercase tracking-widest bg-white/80 dark:bg-slate-900/80 px-1 py-0.5 rounded backdrop-blur-sm shadow-sm ring-1 ring-red-100 dark:ring-red-900/50 -rotate-[10deg] shadow-sm">
+                                  <span className="text-[10px] sm:text-xs font-black text-red-500/60 dark:text-red-400/60 uppercase tracking-widest bg-white/80 dark:bg-slate-900/80 px-1 py-0.5 rounded backdrop-blur-sm shadow-sm ring-1 ring-red-100 dark:ring-red-900/50 -rotate-[10deg]">
                                     {getHolidayInfo(day).isHoliday && (!dayFare || dayFare.crossedOut === undefined) ? getHolidayInfo(day).name || 'Holiday' : 'No Work'}
                                   </span>
                                 </div>
                               )}
                               
-                              {dayFare?.isWorkTrip ? (
-                                <div 
-                                  onClick={() => {
-                                    setCurrentDate(day);
-                                    setView('day');
-                                  }}
-                                  className="flex flex-col justify-between items-stretch py-1 px-1.5 bg-violet-100/50 dark:bg-violet-950/30 border border-violet-100/80 dark:border-violet-900/40 rounded-lg text-slate-800 dark:text-slate-200 cursor-pointer hover:bg-violet-200/80 dark:hover:bg-violet-900/50 transition-colors"
-                                >
-                                  <div className="flex items-center gap-1 text-[9px] sm:text-[10px] font-black text-violet-700 dark:text-violet-300 uppercase tracking-wide">
-                                    <Briefcase size={10} className="stroke-[2.5]" />
-                                    <span>Trip Expenses</span>
-                                  </div>
-                                  {(() => {
-                                    const acc = parseFloat(dayFare.wtAccommodation) || 0;
-                                    const fd = parseFloat(dayFare.wtFood) || 0;
-                                    const wt = parseFloat(dayFare.wtWater) || 0;
-                                    const mc = parseFloat(dayFare.wtMisc) || 0;
-                                    const total = (acc + fd + wt + mc) * currentRate;
-                                    return (
-                                      <div className="text-right text-[11px] sm:text-xs font-black text-violet-800 dark:text-violet-200 mt-1">
-                                        {currentSymbol}{total.toFixed(2)}
-                                      </div>
-                                    );
-                                  })()}
+                              <div className={cn("space-y-1 transition-all", crossedOut ? "opacity-20 pointer-events-none select-none blur-[1px]" : "opacity-100")}>
+                                <div className="group">
+                                  <FareInput 
+                                    valueInGhs={dayFare.morning}
+                                    rate={currentRate}
+                                    onChange={(v) => handleFareChange(day, 'morning', v)}
+                                    placeholder="AM"
+                                    typeContext="morning"
+                                  />
                                 </div>
-                              ) : (
-                                <>
-                                  <div className={cn("space-y-1 transition-all", getIsCrossedOut(day, dayFare) ? "opacity-20 pointer-events-none select-none blur-[1px]" : "opacity-100")}>
-                                    <div className="group">
-                                      <FareInput 
-                                        valueInGhs={dayFare.morning}
-                                        rate={currentRate}
-                                        onChange={(v) => handleFareChange(day, 'morning', v)}
-                                        placeholder="AM"
-                                        typeContext="morning"
-                                      />
-                                    </div>
-                                    <div className="group">
-                                      <FareInput 
-                                        valueInGhs={dayFare.evening}
-                                        rate={currentRate}
-                                        onChange={(v) => handleFareChange(day, 'evening', v)}
-                                        placeholder="PM"
-                                        typeContext="evening"
-                                      />
-                                    </div>
-                                  </div>
-                                  {/* Daily Total Line */}
-                                  {!dayFare.crossedOut && (parseFloat(dayFare.morning) > 0 || parseFloat(dayFare.evening) > 0) && (
-                                    <div className={cn(
-                                      "text-[10px] sm:text-[11px] font-bold text-right pt-1 mt-1 border-t transition-opacity",
-                                      isDarkMode ? "border-slate-800 text-primary-300" : "border-slate-100 text-primary-600"
-                                    )}>
-                                      {currentSymbol}{(((parseFloat(dayFare.morning) || 0) + (parseFloat(dayFare.evening) || 0)) * currentRate).toFixed(2)}
-                                    </div>
-                                  )}
-                                </>
+                                <div className="group">
+                                  <FareInput 
+                                    valueInGhs={dayFare.evening}
+                                    rate={currentRate}
+                                    onChange={(v) => handleFareChange(day, 'evening', v)}
+                                    placeholder="PM"
+                                    typeContext="evening"
+                                  />
+                                </div>
+                              </div>
+                              {/* Daily Total Line */}
+                              {!crossedOut && (parseFloat(dayFare.morning) > 0 || parseFloat(dayFare.evening) > 0) && (
+                                <div className={cn(
+                                  "text-[10px] sm:text-[11px] font-bold text-right pt-1 mt-1 border-t transition-opacityColor",
+                                  isDarkMode ? "border-slate-800 text-primary-300" : "border-slate-100 text-primary-600"
+                                )}>
+                                  {currentSymbol}{(((parseFloat(dayFare.morning) || 0) + (parseFloat(dayFare.evening) || 0)) * currentRate).toFixed(2)}
+                                </div>
                               )}
                             </div>
                           )}
@@ -1319,7 +1370,7 @@ export default function App() {
               )}
 
               {view === 'day' && (
-                <div className="flex flex-col items-center justify-center h-full max-w-sm mx-auto space-y-8">
+                <div className="flex flex-col items-center justify-center h-full max-w-sm mx-auto space-y-8 min-h-[300px]">
                   <div className="text-center space-y-2">
                     <p className="text-sm font-bold uppercase tracking-widest text-primary-500 dark:text-primary-400">{format(currentDate, 'EEEE')}</p>
                     <h3 className="text-3xl font-black text-slate-900 dark:text-white">{format(currentDate, 'MMMM do')}</h3>
@@ -1328,26 +1379,88 @@ export default function App() {
                   <div className="w-full space-y-6">
                     {(() => {
                       const dateKey = format(currentDate, 'yyyy-MM-dd');
+                      
+                      if (trackingMode === 'worktrip') {
+                        const trip = worktrips[dateKey] || { accommodation: '', food: '', water: '', misc: '' };
+                        const acc = parseFloat(trip.accommodation) || 0;
+                        const fd = parseFloat(trip.food) || 0;
+                        const wt = parseFloat(trip.water) || 0;
+                        const mc = parseFloat(trip.misc) || 0;
+                        const tripTotal = (acc + fd + wt + mc) * currentRate;
+
+                        return (
+                          <div className="bg-slate-50 dark:bg-slate-800/40 rounded-3xl p-6 border-2 border-violet-200 dark:border-violet-900/40 relative overflow-hidden w-full space-y-4">
+                            <div className="flex items-center gap-2 pb-2 border-b border-slate-200/60 dark:border-slate-700/60">
+                              <Briefcase className="text-violet-500" size={18} />
+                              <h4 className="font-extrabold text-xs uppercase tracking-widest text-slate-500 dark:text-slate-400">Work Trip Expenditure</h4>
+                            </div>
+
+                            <WorkTripExpenseInput
+                              valueInGhs={trip.accommodation}
+                              rate={currentRate}
+                              onChange={(val) => handleWorkTripChange(currentDate, 'accommodation', val)}
+                              placeholder="0.00"
+                              currencySymbol={currentSymbol}
+                              icon={Home}
+                              label="Accommodation"
+                            />
+
+                            <WorkTripExpenseInput
+                              valueInGhs={trip.food}
+                              rate={currentRate}
+                              onChange={(val) => handleWorkTripChange(currentDate, 'food', val)}
+                              placeholder="0.00"
+                              currencySymbol={currentSymbol}
+                              icon={Utensils}
+                              label="Food & Snacks"
+                            />
+
+                            <WorkTripExpenseInput
+                              valueInGhs={trip.water}
+                              rate={currentRate}
+                              onChange={(val) => handleWorkTripChange(currentDate, 'water', val)}
+                              placeholder="0.00"
+                              currencySymbol={currentSymbol}
+                              icon={Droplet}
+                              label="Water & Drinks"
+                            />
+
+                            <WorkTripExpenseInput
+                              valueInGhs={trip.misc}
+                              rate={currentRate}
+                              onChange={(val) => handleWorkTripChange(currentDate, 'misc', val)}
+                              placeholder="0.00"
+                              currencySymbol={currentSymbol}
+                              icon={Receipt}
+                              label="Miscellaneous Expense"
+                            />
+
+                            <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex justify-between items-center">
+                              <span className="font-bold text-slate-500">Trip Expenditure</span>
+                              <span className="text-2xl font-black text-violet-600 dark:text-violet-400">
+                                {currentSymbol}{tripTotal.toFixed(2)}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      // Transit Mode
                       const dayFare = fares[dateKey] || { morning: '', evening: '' };
                       const crossedOut = getIsCrossedOut(currentDate, dayFare);
-                      const isWorkTrip = dayFare.isWorkTrip || false;
                       
                       return (
                         <div className={cn(
                           "bg-slate-50 dark:bg-slate-800/50 rounded-3xl p-6 border-2 transition-all relative overflow-hidden w-full",
-                          crossedOut 
-                            ? "border-red-200 dark:border-red-900/30" 
-                            : (isWorkTrip 
-                              ? "border-violet-200 dark:border-violet-900/40 bg-violet-50/10 dark:bg-violet-950/5" 
-                              : "border-slate-100 dark:border-slate-800")
+                          crossedOut ? "border-red-200 dark:border-red-900/30" : "border-slate-100 dark:border-slate-800"
                         )}>
-                          {/* 3-way Segment Selector */}
-                          <div className="grid grid-cols-3 bg-slate-200/50 dark:bg-slate-900 p-1 rounded-xl gap-1 mb-6 border border-slate-200/30 dark:border-slate-800/80">
+                          {/* 2-way Segment Selector */}
+                          <div className="grid grid-cols-2 bg-slate-200/50 dark:bg-slate-900 p-1 rounded-xl gap-1 mb-6 border border-slate-200/30 dark:border-slate-800/80">
                             <button
                               onClick={() => handleSetDayStatus(currentDate, 'regular')}
                               className={cn(
-                                "py-2.5 text-xs font-bold rounded-lg transition-all flex flex-col items-center gap-1.5",
-                                (!crossedOut && !isWorkTrip)
+                                "py-2.5 text-xs font-bold rounded-lg transition-all flex flex-col items-center gap-1.5 shadow-none",
+                                !crossedOut
                                   ? "bg-white dark:bg-slate-800 text-primary-600 dark:text-white shadow-md ring-1 ring-slate-200/30 dark:ring-slate-700"
                                   : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
                               )}
@@ -1358,7 +1471,7 @@ export default function App() {
                             <button
                               onClick={() => handleSetDayStatus(currentDate, 'off')}
                               className={cn(
-                                "py-2.5 text-xs font-bold rounded-lg transition-all flex flex-col items-center gap-1.5",
+                                "py-2.5 text-xs font-bold rounded-lg transition-all flex flex-col items-center gap-1.5 shadow-none",
                                 crossedOut
                                   ? "bg-red-500 text-white shadow-md"
                                   : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
@@ -1366,18 +1479,6 @@ export default function App() {
                             >
                               <X size={15} />
                               <span>Off-Day</span>
-                            </button>
-                            <button
-                              onClick={() => handleSetDayStatus(currentDate, 'worktrip')}
-                              className={cn(
-                                "py-2.5 text-xs font-bold rounded-lg transition-all flex flex-col items-center gap-1.5",
-                                isWorkTrip
-                                  ? "bg-violet-600 dark:bg-violet-700 text-white shadow-md"
-                                  : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
-                              )}
-                            >
-                              <Briefcase size={15} />
-                              <span>Work Trip</span>
                             </button>
                           </div>
 
@@ -1393,107 +1494,37 @@ export default function App() {
                                 </p>
                               </div>
                             </div>
-                          ) : isWorkTrip ? (
-                            <div className="space-y-4">
-                              <WorkTripExpenseInput
-                                valueInGhs={dayFare.wtAccommodation}
-                                rate={currentRate}
-                                onChange={(val) => handleWorkTripExpenseChange(currentDate, 'wtAccommodation', val)}
-                                placeholder="0.00"
-                                currencySymbol={currentSymbol}
-                                icon={Home}
-                                label="Accommodation"
-                              />
-
-                              <WorkTripExpenseInput
-                                valueInGhs={dayFare.wtFood}
-                                rate={currentRate}
-                                onChange={(val) => handleWorkTripExpenseChange(currentDate, 'wtFood', val)}
-                                placeholder="0.00"
-                                currencySymbol={currentSymbol}
-                                icon={Utensils}
-                                label="Food & Snacks"
-                              />
-
-                              <WorkTripExpenseInput
-                                valueInGhs={dayFare.wtWater}
-                                rate={currentRate}
-                                onChange={(val) => handleWorkTripExpenseChange(currentDate, 'wtWater', val)}
-                                placeholder="0.00"
-                                currencySymbol={currentSymbol}
-                                icon={Droplet}
-                                label="Water & Drinks"
-                              />
-
-                              <WorkTripExpenseInput
-                                valueInGhs={dayFare.wtMisc}
-                                rate={currentRate}
-                                onChange={(val) => handleWorkTripExpenseChange(currentDate, 'wtMisc', val)}
-                                placeholder="0.00"
-                                currencySymbol={currentSymbol}
-                                icon={Receipt}
-                                label="Miscellaneous Expense"
-                              />
-
-                              <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex justify-between items-center">
-                                  <span className="font-bold text-slate-500">Trip Expenditure</span>
-                                  {(() => {
-                                    const acc = parseFloat(dayFare.wtAccommodation) || 0;
-                                    const fd = parseFloat(dayFare.wtFood) || 0;
-                                    const wt = parseFloat(dayFare.wtWater) || 0;
-                                    const mc = parseFloat(dayFare.wtMisc) || 0;
-                                    const total = (acc + fd + wt + mc) * currentRate;
-                                    return (
-                                      <span className="text-2xl font-black text-violet-600 dark:text-violet-400">
-                                        {currentSymbol}{total.toFixed(2)}
-                                      </span>
-                                    );
-                                  })()}
-                              </div>
-                            </div>
                           ) : (
                             <div className="space-y-6">
                               <div className="space-y-2">
                                 <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2 px-1">
                                   <Sun size={14} className="text-secondary-500" /> Morning fare
                                 </label>
-                                <div className="relative">
-                                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-slate-400">{currentSymbol}</span>
-                                  <input 
-                                    type="number"
-                                    step="any"
-                                    value={dayFare.morning ? (parseFloat(dayFare.morning) * currentRate).toFixed(2).replace(/\.?0+$/, '') : ''}
-                                    onChange={(e) => {
-                                      const val = e.target.value === '' ? '' : (parseFloat(e.target.value) / currentRate).toString();
-                                      handleFareChange(currentDate, 'morning', val);
-                                    }}
-                                    placeholder="0.00"
-                                    className="w-full pl-12 pr-6 py-4 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-2xl text-2xl font-black text-slate-900 dark:text-white outline-none focus:border-primary-400 dark:focus:border-primary-600 transition-all shadow-sm"
-                                  />
-                                </div>
+                                <DayFareInput 
+                                  valueInGhs={dayFare.morning}
+                                  rate={currentRate}
+                                  onChange={(v) => handleFareChange(currentDate, 'morning', v)}
+                                  placeholder="0.00"
+                                  currencySymbol={currentSymbol}
+                                  typeContext="morning"
+                                />
                               </div>
 
                               <div className="space-y-2">
                                 <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2 px-1">
                                   <Moon size={14} className="text-primary-500" /> Evening fare
                                 </label>
-                                <div className="relative">
-                                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-slate-400">{currentSymbol}</span>
-                                  <input 
-                                    type="number"
-                                    step="any"
-                                    value={dayFare.evening ? (parseFloat(dayFare.evening) * currentRate).toFixed(2).replace(/\.?0+$/, '') : ''}
-                                    onChange={(e) => {
-                                      const val = e.target.value === '' ? '' : (parseFloat(e.target.value) / currentRate).toString();
-                                      handleFareChange(currentDate, 'evening', val);
-                                    }}
-                                    placeholder="0.00"
-                                    className="w-full pl-12 pr-6 py-4 bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 rounded-2xl text-2xl font-black text-slate-900 dark:text-white outline-none focus:border-primary-400 dark:focus:border-primary-600 transition-all shadow-sm"
-                                  />
-                                </div>
+                                <DayFareInput 
+                                  valueInGhs={dayFare.evening}
+                                  rate={currentRate}
+                                  onChange={(v) => handleFareChange(currentDate, 'evening', v)}
+                                  placeholder="0.00"
+                                  currencySymbol={currentSymbol}
+                                  typeContext="evening"
+                                />
                               </div>
 
-                              <div className="pt-4 border-t-2 border-slate-100 dark:border-slate-800 flex justify-between items-center">
+                              <div className="pt-4 border-t border-slate-205 dark:border-slate-800 flex justify-between items-center">
                                   <span className="font-bold text-slate-500">Daily Total</span>
                                   <span className="text-3xl font-black text-primary-600 dark:text-primary-400">
                                     {currentSymbol}{(((parseFloat(dayFare.morning) || 0) + (parseFloat(dayFare.evening) || 0)) * currentRate).toFixed(2)}
@@ -1515,9 +1546,117 @@ export default function App() {
                     end: endOfWeek(currentDate, { weekStartsOn: 1 })
                   }).map(day => {
                     const dateKey = format(day, 'yyyy-MM-dd');
+                    const isFocus = isSameDay(day, currentDate);
+                    const today = isToday(day);
+
+                    if (trackingMode === 'worktrip') {
+                      const trip = worktrips[dateKey] || { accommodation: '', food: '', water: '', misc: '' };
+                      const acc = parseFloat(trip.accommodation) || 0;
+                      const fd = parseFloat(trip.food) || 0;
+                      const wt = parseFloat(trip.water) || 0;
+                      const mc = parseFloat(trip.misc) || 0;
+                      const tripTotal = (acc + fd + wt + mc) * currentRate;
+
+                      return (
+                        <div 
+                          key={dateKey}
+                          className={cn(
+                            "group transition-all rounded-3xl border-2 p-5 flex flex-col gap-4 bg-white dark:bg-slate-900",
+                            isFocus ? "border-violet-400 shadow-md ring-1 ring-violet-50 dark:ring-violet-900/20" : "border-slate-100 dark:border-slate-800/80 hover:border-violet-200"
+                          )}
+                        >
+                          <div className="flex justify-between items-center">
+                            <div className="flex items-center gap-3">
+                              <div className={cn(
+                                "w-10 h-10 rounded-xl flex flex-col items-center justify-center font-bold shadow-sm text-xs",
+                                today ? "bg-violet-600 text-white" : "bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400"
+                              )}>
+                                <span className="text-[10px] uppercase leading-none">{format(day, 'EEE')}</span>
+                                <span className="text-base leading-tight">{format(day, 'd')}</span>
+                              </div>
+                              <span className="font-bold text-slate-800 dark:text-slate-200 text-sm">Work Trip Logging</span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-[10px] font-bold text-slate-450 dark:text-slate-500 uppercase tracking-widest">Day Total</span>
+                              <p className={cn("text-lg font-black", tripTotal > 0 ? "text-violet-600 dark:text-violet-400" : "text-slate-300 dark:text-slate-700")}>
+                                {currentSymbol}{tripTotal.toFixed(2)}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 dark:bg-slate-900/40 p-3 rounded-2xl border border-slate-100 dark:border-slate-800">
+                            <div>
+                              <span className="text-[10px] font-semibold text-slate-400 block mb-1">Accommodation</span>
+                              <div className="relative">
+                                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400">{currentSymbol}</span>
+                                <input 
+                                  type="number"
+                                  value={trip.accommodation ? (parseFloat(trip.accommodation) * currentRate).toFixed(2).replace(/\.?0+$/, '') : ''}
+                                  onChange={(e) => {
+                                    const val = e.target.value === '' ? '' : (parseFloat(e.target.value) / currentRate).toString();
+                                    handleWorkTripChange(day, 'accommodation', val);
+                                  }}
+                                  placeholder="0.00"
+                                  className="w-full pl-6 pr-1.5 py-1.5 bg-white dark:bg-slate-800 border dark:border-slate-700 rounded-lg text-xs outline-none focus:border-violet-400 font-bold"
+                                />
+                              </div>
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-semibold text-slate-400 block mb-1">Food & Snacks</span>
+                              <div className="relative">
+                                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400">{currentSymbol}</span>
+                                <input 
+                                  type="number"
+                                  value={trip.food ? (parseFloat(trip.food) * currentRate).toFixed(2).replace(/\.?0+$/, '') : ''}
+                                  onChange={(e) => {
+                                    const val = e.target.value === '' ? '' : (parseFloat(e.target.value) / currentRate).toString();
+                                    handleWorkTripChange(day, 'food', val);
+                                  }}
+                                  placeholder="0.00"
+                                  className="w-full pl-6 pr-1.5 py-1.5 bg-white dark:bg-slate-800 border dark:border-slate-700 rounded-lg text-xs outline-none focus:border-violet-400 font-bold"
+                                />
+                              </div>
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-semibold text-slate-400 block mb-1">Water & Drinks</span>
+                              <div className="relative">
+                                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400">{currentSymbol}</span>
+                                <input 
+                                  type="number"
+                                  value={trip.water ? (parseFloat(trip.water) * currentRate).toFixed(2).replace(/\.?0+$/, '') : ''}
+                                  onChange={(e) => {
+                                    const val = e.target.value === '' ? '' : (parseFloat(e.target.value) / currentRate).toString();
+                                    handleWorkTripChange(day, 'water', val);
+                                  }}
+                                  placeholder="0.00"
+                                  className="w-full pl-6 pr-1.5 py-1.5 bg-white dark:bg-slate-800 border dark:border-slate-700 rounded-lg text-xs outline-none focus:border-violet-400 font-bold"
+                                />
+                              </div>
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-semibold text-slate-400 block mb-1">Miscellaneous</span>
+                              <div className="relative">
+                                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400">{currentSymbol}</span>
+                                <input 
+                                  type="number"
+                                  value={trip.misc ? (parseFloat(trip.misc) * currentRate).toFixed(2).replace(/\.?0+$/, '') : ''}
+                                  onChange={(e) => {
+                                    const val = e.target.value === '' ? '' : (parseFloat(e.target.value) / currentRate).toString();
+                                    handleWorkTripChange(day, 'misc', val);
+                                  }}
+                                  placeholder="0.00"
+                                  className="w-full pl-6 pr-1.5 py-1.5 bg-white dark:bg-slate-800 border dark:border-slate-700 rounded-lg text-xs outline-none focus:border-violet-400 font-bold"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    // otherwise, standard transit
                     const dayFare = fares[dateKey] || { morning: '', evening: '' };
                     const crossedOut = getIsCrossedOut(day, dayFare);
-                    const isFocus = isSameDay(day, currentDate);
                     const total = ((parseFloat(dayFare.morning) || 0) + (parseFloat(dayFare.evening) || 0)) * currentRate;
 
                     return (
@@ -1597,6 +1736,7 @@ export default function App() {
               {view === 'year' && (() => {
                   let yearlyTotal = 0;
                   let yearlyActiveDays = 0;
+                  
                   const monthsData = eachMonthOfInterval({
                     start: startOfYear(currentDate),
                     end: endOfYear(currentDate)
@@ -1607,13 +1747,31 @@ export default function App() {
                     
                     let mTotal = 0;
                     let mActive = 0;
+                    
                     mDays.forEach(day => {
                       const dateKey = format(day, 'yyyy-MM-dd');
-                      const dayFare = fares[dateKey];
-                      if (dayFare && !getIsCrossedOut(day, dayFare)) {
-                        const m = (parseFloat(dayFare.morning) || 0) + (parseFloat(dayFare.evening) || 0);
-                        if (m > 0) mActive++;
-                        mTotal += m * currentRate;
+                      if (trackingMode === 'worktrip') {
+                        const trip = worktrips[dateKey];
+                        if (trip) {
+                          const acc = parseFloat(trip.accommodation) || 0;
+                          const fd = parseFloat(trip.food) || 0;
+                          const wt = parseFloat(trip.water) || 0;
+                          const mc = parseFloat(trip.misc) || 0;
+                          const sum = acc + fd + wt + mc;
+                          if (sum > 0) {
+                            mActive++;
+                            mTotal += sum * currentRate;
+                          }
+                        }
+                      } else {
+                        const dayFare = fares[dateKey];
+                        if (dayFare && !getIsCrossedOut(day, dayFare)) {
+                          const m = (parseFloat(dayFare.morning) || 0) + (parseFloat(dayFare.evening) || 0);
+                          if (m > 0) {
+                            mActive++;
+                            mTotal += m * currentRate;
+                          }
+                        }
                       }
                     });
                     
@@ -1628,13 +1786,13 @@ export default function App() {
                   return (
                     <div className="flex flex-col gap-6 w-full">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="bg-primary-900 border border-primary-800 rounded-3xl p-6 relative overflow-hidden text-white shadow-lg flex flex-col justify-center transition-colors">
-                          <div className="absolute -right-10 -top-10 w-40 h-40 bg-primary-500 rounded-full opacity-30 blur-3xl pointer-events-none"></div>
-                          <span className="text-primary-300 text-xs font-semibold uppercase tracking-widest mb-1 z-10">Year Total Expenses</span>
+                        <div className={cn("rounded-3xl p-6 relative overflow-hidden text-white shadow-lg flex flex-col justify-center transition-colors", trackingMode === 'worktrip' ? "bg-violet-900 border border-violet-850" : "bg-primary-900 border border-primary-800")}>
+                          <div className="absolute -right-10 -top-10 w-40 h-40 bg-white opacity-10 rounded-full blur-3xl pointer-events-none"></div>
+                          <span className="text-white/70 text-xs font-semibold uppercase tracking-widest mb-1 z-10">Year Expenses</span>
                           <h3 className="text-4xl lg:text-5xl font-black mb-1 z-10">{currentSymbol}{yearlyTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
                         </div>
                         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 relative overflow-hidden shadow-sm flex flex-col justify-center transition-colors">
-                           <span className="text-slate-500 text-xs font-semibold uppercase tracking-widest mb-1">Average Daily Spending</span>
+                           <span className="text-slate-500 text-xs font-semibold uppercase tracking-widest mb-1">Average Spending per Day</span>
                            <h3 className="text-4xl lg:text-5xl font-black text-slate-900 dark:text-white mb-1">{currentSymbol}{yearlyAvg.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-2">{yearlyActiveDays} Active Days</span>
                         </div>
@@ -1653,18 +1811,18 @@ export default function App() {
                               }}
                               className={cn(
                                 "relative group rounded-3xl border-2 p-5 text-left transition-all hover:scale-[1.02] active:scale-[0.98]",
-                                isCur ? "border-primary-400 bg-white dark:bg-slate-800 shadow-lg ring-1 ring-primary-50 dark:ring-primary-900/20" : "border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 hover:bg-white dark:hover:bg-slate-800 hover:border-slate-200 shadow-sm",
+                                isCur ? "border-primary-400 bg-white dark:bg-slate-800 shadow-lg ring-1 ring-primary-50" : "border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 hover:bg-white dark:hover:bg-slate-800 hover:border-slate-200 shadow-sm",
                                 mTotal === 0 && !isNow && "opacity-60"
                               )}
                             >
                               {isNow && (
-                                <span className="absolute top-4 right-4 text-[8px] font-black uppercase tracking-[0.2em] bg-primary-600 text-white px-2 py-0.5 rounded-full shadow-sm z-10">Current</span>
+                                <span className={cn("absolute top-4 right-4 text-[8px] font-black uppercase tracking-[0.2em] text-white px-2 py-0.5 rounded-full shadow-sm z-10", trackingMode === 'worktrip' ? "bg-violet-600" : "bg-primary-600")}>Current</span>
                               )}
                               <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">{format(month, 'MMM')}</p>
                               <h4 className="text-xl font-black text-slate-900 dark:text-white mb-4">{currentSymbol}{mTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h4>
                               
                               <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 dark:text-slate-500 border-t border-slate-100 dark:border-slate-700/50 pt-3">
-                                <span>{mActive} days</span>
+                                <span>{mActive} active days</span>
                                 <span className="group-hover:text-primary-500 transition-colors uppercase tracking-widest">Detail →</span>
                               </div>
                             </button>
@@ -1680,34 +1838,34 @@ export default function App() {
           {!isCompactMode && (
             <>
               {/* Summary Stat Card (Bento) */}
-              <div className="md:col-span-4 md:row-span-3 bg-slate-900 dark:bg-slate-950 rounded-3xl p-6 lg:p-8 flex flex-col justify-center text-white relative overflow-hidden shadow-lg transition-colors">
+              <div className={cn("md:col-span-4 md:row-span-3 rounded-3xl p-6 lg:p-8 flex flex-col justify-center text-white relative overflow-hidden shadow-lg transition-colors", trackingMode === 'worktrip' ? "bg-violet-955 bg-slate-900 dark:bg-slate-950" : "bg-slate-900 dark:bg-slate-950")}>
                 <div className="absolute -right-10 -top-10 w-40 h-40 bg-primary-500 rounded-full opacity-30 blur-3xl pointer-events-none"></div>
                 <div className="absolute -left-10 -bottom-10 w-40 h-40 bg-secondary-500 rounded-full opacity-20 blur-3xl pointer-events-none"></div>
                 
                 {trackingMode === 'worktrip' ? (
                   <>
-                    <span className="text-violet-300 dark:text-violet-400 text-sm font-semibold uppercase tracking-widest mb-1 z-10 flex items-center gap-1.5">
+                    <span className="text-violet-305 text-violet-400 text-sm font-semibold uppercase tracking-widest mb-1.5 z-10 flex items-center gap-1.5">
                       <Briefcase size={14} /> Month Trip Expenses
                     </span>
                     <h3 className="text-4xl lg:text-5xl font-black mb-3 z-10 tracking-tight">
-                      {currentSymbol}{workTripTotalThisMonth.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {currentSymbol}{workTripAnalytics.workTripTotalThisMonth.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </h3>
                     <div className="space-y-1.5 mt-1 pt-3 border-t border-slate-800 z-10 w-full">
                       <div className="flex justify-between items-center text-[11px] leading-none">
-                        <span className="text-slate-400 flex items-center gap-1"><Home size={11} /> Accommodation</span>
-                        <span className="font-bold text-slate-200">{currentSymbol}{wtAccommodationTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <span className="text-slate-400 flex items-center gap-1.5"><Home size={11} /> Accommodation</span>
+                        <span className="font-bold text-slate-200">{currentSymbol}{workTripAnalytics.wtAccommodationTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                       <div className="flex justify-between items-center text-[11px] leading-none">
-                        <span className="text-slate-400 flex items-center gap-1"><Utensils size={11} /> Food & Snacks</span>
-                        <span className="font-bold text-slate-200">{currentSymbol}{wtFoodTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <span className="text-slate-400 flex items-center gap-1.5"><Utensils size={11} /> Food & Snacks</span>
+                        <span className="font-bold text-slate-200">{currentSymbol}{workTripAnalytics.wtFoodTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                       <div className="flex justify-between items-center text-[11px] leading-none">
-                        <span className="text-slate-400 flex items-center gap-1"><Droplet size={11} /> Water & Drinks</span>
-                        <span className="font-bold text-slate-200">{currentSymbol}{wtWaterTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <span className="text-slate-400 flex items-center gap-1.5"><Droplet size={11} /> Water & Drinks</span>
+                        <span className="font-bold text-slate-200">{currentSymbol}{workTripAnalytics.wtWaterTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                       <div className="flex justify-between items-center text-[11px] leading-none">
-                        <span className="text-slate-400 flex items-center gap-1"><Receipt size={11} /> Miscellaneous</span>
-                        <span className="font-bold text-slate-200">{currentSymbol}{wtMiscTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <span className="text-slate-400 flex items-center gap-1.5"><Receipt size={11} /> Miscellaneous</span>
+                        <span className="font-bold text-slate-200">{currentSymbol}{workTripAnalytics.wtMiscTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                     </div>
                   </>
@@ -1715,12 +1873,12 @@ export default function App() {
                   <>
                     <span className="text-primary-300 dark:text-primary-400 text-sm font-semibold uppercase tracking-widest mb-2 z-10">Month Total Spent</span>
                     <h3 className="text-5xl lg:text-6xl font-black mb-4 z-10 tracking-tight">
-                      {currentSymbol}{totalThisMonth.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {currentSymbol}{transitAnalytics.totalThisMonth.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </h3>
                     <div className="flex items-center gap-2 z-10">
                       <p className="text-xs text-slate-400">
                         {isSameMonth(currentDate, new Date()) ? 'Forecasted end of month:' : 'Final monthly total:'}{' '}
-                        <span className="text-white font-bold">{currentSymbol}{forecast.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <span className="text-white font-bold">{currentSymbol}{transitAnalytics.forecast.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </p>
                     </div>
                   </>
@@ -1731,31 +1889,31 @@ export default function App() {
               <div className="md:col-span-2 md:row-span-3 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm p-5 lg:p-6 flex flex-col justify-between transition-colors">
                 <div>
                   <div className={cn(
-                    "w-10 h-10 rounded-xl flex items-center justify-center mb-4 transition-colors",
+                    "w-10 h-10 rounded-xl flex items-center justify-center mb-4 transition-colors animate-pulse",
                     trackingMode === 'worktrip' 
-                      ? "bg-violet-50 dark:bg-violet-950/30 text-violet-600 dark:text-violet-400"
+                      ? "bg-violet-50 dark:bg-violet-950/30 text-violet-650 dark:text-violet-400"
                       : "bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400"
                   )}>
                     {trackingMode === 'worktrip' ? <Briefcase size={20} strokeWidth={2.5} /> : <TrendingUp size={20} strokeWidth={2.5} />}
                   </div>
-                  <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">
+                  <p className="text-sm text-slate-500 dark:text-slate-400 font-medium font-bold">
                     {trackingMode === 'worktrip' ? "Trip Day Avg" : "Daily Avg"}
                   </p>
                   <p className="text-2xl lg:text-3xl font-bold tracking-tight text-slate-900 dark:text-white">
                     {currentSymbol}{(trackingMode === 'worktrip' 
-                      ? (workTripDaysThisMonth > 0 ? workTripTotalThisMonth / workTripDaysThisMonth : 0) 
-                      : avgDaily
+                      ? (workTripAnalytics.workTripDaysThisMonth > 0 ? workTripAnalytics.workTripTotalThisMonth / workTripAnalytics.workTripDaysThisMonth : 0) 
+                      : transitAnalytics.avgDaily
                     ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
                 </div>
                 <div className="mt-4">
                   <p className={cn(
-                    "text-[10px] font-bold px-2 py-1 rounded w-fit uppercase tracking-wide transition-colors",
+                    "text-[10px] font-bold px-3 py-1 rounded-full w-fit uppercase tracking-wide transition-colors",
                     trackingMode === 'worktrip'
                       ? "text-violet-700 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/40"
                       : "text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/40"
                   )}>
-                    {trackingMode === 'worktrip' ? `${workTripDaysThisMonth} Trip Days Covered` : `${activeDaysCount} Days Traveled`}
+                    {trackingMode === 'worktrip' ? `${workTripAnalytics.workTripDaysThisMonth} Trip Days Covered` : `${transitAnalytics.activeDaysCount} Days Traveled`}
                   </p>
                 </div>
               </div>
@@ -1763,11 +1921,11 @@ export default function App() {
               {/* Monthly Trend Chart */}
               <div className="md:col-span-2 md:row-span-3 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm p-4 lg:p-6 flex flex-col transition-colors">
                 <div className="mb-2">
-                  <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">Daily Spending Trend</p>
+                  <p className="text-sm text-slate-500 dark:text-slate-400 font-bold font-medium">Daily Spending Trend</p>
                 </div>
                 <div className="flex-1 w-full min-h-[100px]">
                   <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={chartData} margin={{ top: 10, right: 0, left: 0, bottom: 0 }}>
+                    <ComposedChart data={trackingMode === 'worktrip' ? workTripAnalytics.chartData : transitAnalytics.chartData} margin={{ top: 10, right: 0, left: 0, bottom: 0 }}>
                       <Tooltip 
                         cursor={{fill: isDarkMode ? '#1e293b' : '#f1f5f9'}}
                         content={<CustomTooltip currentSymbol={currentSymbol} currentDate={currentDate} trackingMode={trackingMode} />}
@@ -1897,32 +2055,32 @@ export default function App() {
 
               {activeSettingsTab === 'recurring' && (
                 <div className="space-y-4 motion-preset-fade">
-                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Recurring Fares</h4>
+                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest font-extrabold pb-1">Recurring Fares</h4>
                   <div className="space-y-3 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">
-                    <p className="text-xs text-slate-500 mb-2">Auto-fill values for work days in current week.</p>
+                    <p className="text-xs text-slate-500 mb-2">Auto-fill values for transit work days in current week.</p>
                     <div className="flex justify-between items-center">
-                      <span className="text-sm font-semibold">Morning</span>
+                      <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">Morning</span>
                       <div className="relative w-24">
-                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">{currentSymbol}</span>
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-450">{currentSymbol}</span>
                         <input 
                           type="number"
                           value={recurringMorning}
                           onChange={e => setRecurringMorning(e.target.value)}
                           placeholder="0.00"
-                          className="w-full pl-6 pr-2 py-1 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-md text-sm outline-none focus:border-primary-500"
+                          className="w-full pl-6 pr-2 py-1 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-md text-sm outline-none focus:border-primary-500 font-semibold"
                         />
                       </div>
                     </div>
                     <div className="flex justify-between items-center">
-                      <span className="text-sm font-semibold">Evening</span>
+                      <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">Evening</span>
                       <div className="relative w-24">
-                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">{currentSymbol}</span>
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-455">{currentSymbol}</span>
                         <input 
                           type="number"
                           value={recurringEvening}
                           onChange={e => setRecurringEvening(e.target.value)}
                           placeholder="0.00"
-                          className="w-full pl-6 pr-2 py-1 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-md text-sm outline-none focus:border-primary-500"
+                          className="w-full pl-6 pr-2 py-1 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-md text-sm outline-none focus:border-primary-500 font-semibold"
                         />
                       </div>
                     </div>
@@ -1935,7 +2093,7 @@ export default function App() {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <Bell size={18} className={remindersEnabled ? "text-primary-500" : "text-slate-400"} />
-                      <span className="font-semibold text-slate-800 dark:text-slate-200">Daily Reminders</span>
+                      <span className="font-semibold text-slate-800 dark:text-slate-205">Daily Reminders</span>
                     </div>
                     <label className="relative inline-flex items-center cursor-pointer">
                       <input 
@@ -1956,21 +2114,21 @@ export default function App() {
                   {remindersEnabled && (
                     <div className="pl-6 space-y-3">
                       <div className="flex justify-between items-center">
-                        <span className="text-sm text-slate-600 dark:text-slate-400">Morning Fare</span>
+                        <span className="text-sm text-slate-650 dark:text-slate-400">Morning Fare</span>
                         <input 
                           type="time" 
                           value={morningReminderTime}
                           onChange={e => setMorningReminderTime(e.target.value)}
-                          className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-sm outline-none focus:border-primary-500 text-slate-700 dark:text-slate-300"
+                          className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-sm outline-none focus:border-primary-500 text-slate-700 dark:text-slate-300 font-semibold"
                         />
                       </div>
                       <div className="flex justify-between items-center">
-                        <span className="text-sm text-slate-600 dark:text-slate-400">Evening Fare</span>
+                        <span className="text-sm text-slate-650 dark:text-slate-400">Evening Fare</span>
                         <input 
                           type="time" 
                           value={eveningReminderTime}
                           onChange={e => setEveningReminderTime(e.target.value)}
-                          className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-sm outline-none focus:border-primary-500 text-slate-700 dark:text-slate-300"
+                          className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-sm outline-none focus:border-primary-500 text-slate-700 dark:text-slate-300 font-semibold"
                         />
                       </div>
                       <p className="text-xs text-slate-400 mt-2">
@@ -1979,7 +2137,7 @@ export default function App() {
                     </div>
                   )}
                   {!remindersEnabled && (
-                    <p className="text-sm text-slate-500 italic text-center py-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl">
+                    <p className="text-sm text-slate-500 italic text-center py-4 bg-slate-50 dark:bg-slate-8/50 rounded-xl">
                       Turn on reminders to get notified when it's time to log your fares.
                     </p>
                   )}
@@ -1987,9 +2145,9 @@ export default function App() {
               )}
 
               {activeSettingsTab === 'account' && (
-                <div className="space-y-6 motion-preset-fade">
+                <div className="space-y-6 motion-preset-fade font-semibold">
                   <div className="space-y-4">
-                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Account & Data</h4>
+                    <h4 className="text-xs font-extrabold text-slate-400 uppercase tracking-widest">Account & Data</h4>
                     {user ? (
                       <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-800">
                         <div className="flex items-center gap-3 mb-4">
@@ -2010,7 +2168,7 @@ export default function App() {
                     ) : (
                       <div className="bg-primary-50 dark:bg-primary-900/10 p-4 rounded-xl border border-primary-100 dark:border-primary-900/20">
                         <p className="text-sm text-primary-700 dark:text-primary-300 font-medium mb-3">Login to sync your data</p>
-                        <p className="text-xs text-primary-600/80 dark:text-primary-400/70 mb-4">Pull your saved commute history and keep it synced across all your devices.</p>
+                        <p className="text-xs text-primary-600/85 dark:text-primary-400/80 mb-4">Pull your saved commute history and keep it synced across all your devices.</p>
                       </div>
                     )}
                     <div className="grid grid-cols-1 gap-3">
@@ -2042,7 +2200,7 @@ export default function App() {
             <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 shrink-0">
               <button 
                 onClick={() => setShowSettings(false)}
-                className="w-full py-2.5 bg-slate-900 dark:bg-primary-600 text-white rounded-xl font-semibold hover:bg-slate-800 dark:hover:bg-primary-500 transition-colors"
+                className="w-full py-2.5 bg-slate-900 dark:bg-primary-600 text-white rounded-xl font-semibold hover:bg-slate-800 dark:hover:bg-primary-500 transition-colors pointer-events-auto"
               >
                 Done
               </button>
@@ -2054,5 +2212,3 @@ export default function App() {
     </div>
   );
 }
-
-

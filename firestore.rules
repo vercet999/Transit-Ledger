@@ -26,21 +26,35 @@ service cloud.firestore {
                  ( !('morning' in data) || (data.morning is string && data.morning.size() <= 50)) &&
                  ( !('evening' in data) || (data.evening is string && data.evening.size() <= 50)) &&
                  ( !('crossedOut' in data) || data.crossedOut is bool) &&
-                 ( !('isWorkTrip' in data) || data.isWorkTrip is bool) &&
-                 ( !('wtAccommodation' in data) || (data.wtAccommodation is string && data.wtAccommodation.size() <= 50)) &&
-                 ( !('wtFood' in data) || (data.wtFood is string && data.wtFood.size() <= 50)) &&
-                 ( !('wtWater' in data) || (data.wtWater is string && data.wtWater.size() <= 50)) &&
-                 ( !('wtMisc' in data) || (data.wtMisc is string && data.wtMisc.size() <= 50)) &&
                  ( !('updatedAt' in data) || data.updatedAt == request.time || data.updatedAt is timestamp );
         }
 
         allow get: if isOwner(userId);
-        // Ensure query filters by userId
         allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
 
         allow create: if isOwner(userId) && isValidId(fareId) && isValidFare(incoming());
         allow update: if isOwner(userId) && isValidFare(incoming()) && incoming().userId == existing().userId &&
-          incoming().diff(existing()).affectedKeys().hasOnly(['morning', 'evening', 'crossedOut', 'updatedAt', 'isWorkTrip', 'wtAccommodation', 'wtFood', 'wtWater', 'wtMisc']);
+          incoming().diff(existing()).affectedKeys().hasOnly(['morning', 'evening', 'crossedOut', 'updatedAt']);
+        allow delete: if isOwner(userId);
+      }
+
+      match /worktrips/{worktripId} {
+        function isValidWorkTrip(data) {
+          return data.keys().hasAll(['userId']) &&
+                 data.userId == request.auth.uid &&
+                 ( !('accommodation' in data) || (data.accommodation is string && data.accommodation.size() <= 50)) &&
+                 ( !('food' in data) || (data.food is string && data.food.size() <= 50)) &&
+                 ( !('water' in data) || (data.water is string && data.water.size() <= 50)) &&
+                 ( !('misc' in data) || (data.misc is string && data.misc.size() <= 50)) &&
+                 ( !('updatedAt' in data) || data.updatedAt == request.time || data.updatedAt is timestamp );
+        }
+
+        allow get: if isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+
+        allow create: if isOwner(userId) && isValidId(worktripId) && isValidWorkTrip(incoming());
+        allow update: if isOwner(userId) && isValidWorkTrip(incoming()) && incoming().userId == existing().userId &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['accommodation', 'food', 'water', 'misc', 'updatedAt']);
         allow delete: if isOwner(userId);
       }
 

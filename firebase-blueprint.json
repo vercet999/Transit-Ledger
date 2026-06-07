@@ -1,39 +1,50 @@
 {
   "entities": {
     "Fare": {
-      "title": "Daily Fare",
+      "title": "Daily Transit Fare",
       "description": "A single day's transportation fare data",
       "type": "object",
       "properties": {
         "morning": {
           "type": "string",
-          "description": "Morning fare amount in chosen currency"
+          "description": "Morning fare amount in GHS"
         },
         "evening": {
           "type": "string",
-          "description": "Evening fare amount in chosen currency"
+          "description": "Evening fare amount in GHS"
         },
         "crossedOut": {
           "type": "boolean",
           "description": "Whether the day was marked as no work"
         },
-        "isWorkTrip": {
-          "type": "boolean",
-          "description": "Whether the day was a work trip"
+        "userId": {
+          "type": "string",
+          "description": "ID of the user who owns the record"
         },
-        "wtAccommodation": {
+        "updatedAt": {
+          "type": "timestamp"
+        }
+      },
+      "required": ["userId"]
+    },
+    "WorkTrip": {
+      "title": "Work Trip Expenses",
+      "description": "A single day's work trip expense records",
+      "type": "object",
+      "properties": {
+        "accommodation": {
           "type": "string",
           "description": "Accommodation expense amount in GHS"
         },
-        "wtFood": {
+        "food": {
           "type": "string",
           "description": "Food and snack expense amount in GHS"
         },
-        "wtWater": {
+        "water": {
           "type": "string",
           "description": "Water expense amount in GHS"
         },
-        "wtMisc": {
+        "misc": {
           "type": "string",
           "description": "Miscellaneous expense amount in GHS"
         },
@@ -67,7 +78,13 @@
       "schema": {
         "$ref": "Fare"
       },
-      "description": "Stores daily fare records for a user"
+      "description": "Stores daily transit fare records for a user"
+    },
+    "/users/{userId}/worktrips/{worktripId}": {
+      "schema": {
+        "$ref": "WorkTrip"
+      },
+      "description": "Stores daily work trip expense records for a user"
     },
     "/users/{userId}/settings/preferences": {
       "schema": {
