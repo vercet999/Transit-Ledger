@@ -1,0 +1,17 @@
+{
+  "name": "Transit Tracker",
+  "short_name": "Transit",
+  "description": "Track your daily commute and work trip expenses easily.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/transit_ledger_favicon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

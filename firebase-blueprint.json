@@ -17,6 +17,10 @@
           "type": "boolean",
           "description": "Whether the day was marked as no work"
         },
+        "note": {
+          "type": "string",
+          "description": "Short text note for the day"
+        },
         "userId": {
           "type": "string",
           "description": "ID of the user who owns the record"
@@ -48,6 +52,10 @@
           "type": "string",
           "description": "Miscellaneous expense amount in GHS"
         },
+        "note": {
+          "type": "string",
+          "description": "Short text note for the day"
+        },
         "userId": {
           "type": "string",
           "description": "ID of the user who owns the record"
@@ -68,6 +76,28 @@
         },
         "userId": {
           "type": "string"
+        },
+        "remindersEnabled": {
+          "type": "boolean"
+        },
+        "morningReminderTime": {
+          "type": "string"
+        },
+        "eveningReminderTime": {
+          "type": "string"
+        },
+        "accentColor": {
+          "type": "string"
+        },
+        "recurringMorning": {
+          "type": "string"
+        },
+        "recurringEvening": {
+          "type": "string"
+        },
+        "dailyAllowanceGhs": {
+          "type": "string",
+          "description": "Daily allowance in GHS for Work Trip savings comparison"
         }
       },
       "required": ["userId", "currency"]

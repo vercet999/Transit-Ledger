@@ -57,7 +57,8 @@ import {
   Receipt,
   Car,
   Plus,
-  Trash
+  Trash,
+  StickyNote
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -110,6 +111,7 @@ interface DayFare {
   morning: string;
   evening: string;
   crossedOut?: boolean;
+  note?: string;
 }
 
 interface MonthlyFares {
@@ -121,6 +123,7 @@ interface WorkTripDay {
   food: string;
   water: string;
   misc: string;
+  note?: string;
 }
 
 interface MonthlyWorkTrips {
@@ -135,6 +138,7 @@ function sanitizeFareData(fare: DayFare): Partial<DayFare> {
   if (fare.morning !== undefined) cleaned.morning = fare.morning;
   if (fare.evening !== undefined) cleaned.evening = fare.evening;
   if (fare.crossedOut !== undefined) cleaned.crossedOut = fare.crossedOut;
+  if (fare.note !== undefined) cleaned.note = fare.note;
   return cleaned;
 }
 
@@ -144,6 +148,7 @@ function sanitizeWorkTripData(trip: WorkTripDay): Partial<WorkTripDay> {
   if (trip.food !== undefined) cleaned.food = trip.food;
   if (trip.water !== undefined) cleaned.water = trip.water;
   if (trip.misc !== undefined) cleaned.misc = trip.misc;
+  if (trip.note !== undefined) cleaned.note = trip.note;
   return cleaned;
 }
 
@@ -420,6 +425,8 @@ export default function App() {
 
   const [currency, setCurrency] = useState(() => localStorage.getItem('currency') || 'GHS');
   const [rates, setRates] = useState<Record<string, number>>({'GHS': 1});
+  const [dailyAllowanceGhs, setDailyAllowanceGhs] = useState(() => localStorage.getItem('dailyAllowanceGhs') || '270');
+  const [allowanceInput, setAllowanceInput] = useState('');
 
   useEffect(() => {
     if (isDarkMode) {
@@ -510,6 +517,7 @@ export default function App() {
         if (data.accentColor) setAccentColor(data.accentColor);
         if (data.recurringMorning !== undefined) setRecurringMorning(data.recurringMorning);
         if (data.recurringEvening !== undefined) setRecurringEvening(data.recurringEvening);
+        if (data.dailyAllowanceGhs !== undefined) setDailyAllowanceGhs(data.dailyAllowanceGhs);
       }
     }, (err) => {
       if (err.message.includes('permission')) {
@@ -596,6 +604,7 @@ export default function App() {
     localStorage.setItem('accentColor', accentColor);
     localStorage.setItem('recurringMorning', recurringMorning);
     localStorage.setItem('recurringEvening', recurringEvening);
+    localStorage.setItem('dailyAllowanceGhs', dailyAllowanceGhs);
 
     if (user) {
       const prefsPath = `users/${user.uid}/settings`;
@@ -607,10 +616,11 @@ export default function App() {
         eveningReminderTime,
         accentColor,
         recurringMorning,
-        recurringEvening
-      }).catch(err => handleFirestoreError(err, OperationType.WRITE, prefsPath));
+        recurringEvening,
+        dailyAllowanceGhs
+      }, { merge: true }).catch(err => handleFirestoreError(err, OperationType.WRITE, prefsPath));
     }
-  }, [currency, remindersEnabled, morningReminderTime, eveningReminderTime, accentColor, recurringMorning, recurringEvening, user]);
+  }, [currency, remindersEnabled, morningReminderTime, eveningReminderTime, accentColor, recurringMorning, recurringEvening, dailyAllowanceGhs, user]);
 
   // Save to localStorage whenever fares change
   useEffect(() => {
@@ -690,7 +700,15 @@ export default function App() {
 
       const showNotification = (title: string, body: string) => {
         if (Notification.permission === 'granted') {
-          new Notification(title, { body });
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.ready.then(registration => {
+              registration.showNotification(title, { body, icon: '/transit_ledger_favicon.svg' });
+            }).catch(() => {
+              new Notification(title, { body, icon: '/transit_ledger_favicon.svg' });
+            });
+          } else {
+            new Notification(title, { body, icon: '/transit_ledger_favicon.svg' });
+          }
         }
       };
 
@@ -740,7 +758,7 @@ export default function App() {
   };
 
   // handlers for Transit Mode
-  const handleFareChange = (date: Date, type: 'morning' | 'evening', value: string) => {
+  const handleFareChange = (date: Date, type: 'morning' | 'evening' | 'note', value: string) => {
     const dateKey = format(date, 'yyyy-MM-dd');
     setFares(prev => {
       const current = (prev[dateKey] as DayFare) || { morning: '', evening: '' };
@@ -761,7 +779,7 @@ export default function App() {
           ...sanitizeFareData(updated),
           userId: user.uid,
           updatedAt: serverTimestamp()
-        }).catch(err => handleFirestoreError(err, OperationType.WRITE, fareDocPath));
+        }, { merge: true }).catch(err => handleFirestoreError(err, OperationType.WRITE, fareDocPath));
       }
       
       return newState;
@@ -789,7 +807,7 @@ export default function App() {
           ...sanitizeFareData(updated),
           userId: user.uid,
           updatedAt: serverTimestamp()
-        }).catch(err => handleFirestoreError(err, OperationType.WRITE, fareDocPath));
+        }, { merge: true }).catch(err => handleFirestoreError(err, OperationType.WRITE, fareDocPath));
       }
       
       return newState;
@@ -821,14 +839,14 @@ export default function App() {
           ...sanitizeFareData(updated),
           userId: user.uid,
           updatedAt: serverTimestamp()
-        }).catch(err => handleFirestoreError(err, OperationType.WRITE, fareDocPath));
+        }, { merge: true }).catch(err => handleFirestoreError(err, OperationType.WRITE, fareDocPath));
       }
       return newState;
     });
   };
 
   // handlers for Work Trip Mode
-  const handleWorkTripChange = (date: Date, field: 'accommodation' | 'food' | 'water' | 'misc', value: string) => {
+  const handleWorkTripChange = (date: Date, field: 'accommodation' | 'food' | 'water' | 'misc' | 'note', value: string) => {
     const dateKey = format(date, 'yyyy-MM-dd');
     setWorktrips(prev => {
       const current = prev[dateKey] || { accommodation: '', food: '', water: '', misc: '' };
@@ -848,7 +866,7 @@ export default function App() {
           ...sanitizeWorkTripData(updated),
           userId: user.uid,
           updatedAt: serverTimestamp()
-        }).catch(err => handleFirestoreError(err, OperationType.WRITE, worktripsDocPath));
+        }, { merge: true }).catch(err => handleFirestoreError(err, OperationType.WRITE, worktripsDocPath));
       }
       return newState;
     });
@@ -1010,6 +1028,35 @@ export default function App() {
       chartData: chart
     };
   }, [worktrips, monthStart, monthEnd, currentRate]);
+
+  const { totalAllowance, totalSpentAccFood, totalSavings, savingsPercentage, dailyAllowanceSelected } = useMemo(() => {
+    const allowanceValGhs = parseFloat(dailyAllowanceGhs) || 0;
+    const allowanceSelected = allowanceValGhs * currentRate;
+    const activeTripDays = workTripAnalytics.workTripDaysThisMonth;
+    const totalAllowanceVal = activeTripDays * allowanceSelected;
+    const totalSpentVal = workTripAnalytics.wtAccommodationTotal + workTripAnalytics.wtFoodTotal;
+    const savings = totalAllowanceVal - totalSpentVal;
+    const percentage = totalAllowanceVal > 0 ? (savings / totalAllowanceVal) * 100 : 0;
+    return {
+      totalAllowance: totalAllowanceVal,
+      totalSpentAccFood: totalSpentVal,
+      totalSavings: savings,
+      savingsPercentage: percentage,
+      dailyAllowanceSelected: allowanceSelected
+    };
+  }, [dailyAllowanceGhs, currentRate, workTripAnalytics]);
+
+  useEffect(() => {
+    if (dailyAllowanceGhs) {
+      const converted = parseFloat(dailyAllowanceGhs) * currentRate;
+      const str = converted.toFixed(2).replace(/\.?0+$/, '');
+      if (parseFloat(allowanceInput || '0') !== converted) {
+        setAllowanceInput(str);
+      }
+    } else {
+      setAllowanceInput('');
+    }
+  }, [dailyAllowanceGhs, currentRate]);
 
   const exportToExcel = () => {
     const daysInMonth = eachDayOfInterval({ start: monthStart, end: monthEnd });
@@ -1244,11 +1291,12 @@ export default function App() {
                           >
                             <div className="flex justify-between items-center mb-1">
                               <span className={cn(
-                                "text-[10px] sm:text-xs font-bold",
+                                "text-[10px] sm:text-xs font-bold flex items-center gap-1",
                                 today ? "text-violet-600 dark:text-violet-400" : (isWeekend && currentMonth ? "text-slate-400 dark:text-slate-500" : "text-slate-600 dark:text-slate-300"),
                                 !currentMonth && "text-slate-350 dark:text-slate-650"
                               )}>
                                 {format(day, 'dd')}{today && <span className="hidden sm:inline"> Today</span>}
+                                {trip.note && currentMonth && <StickyNote size={10} className="text-amber-500" />}
                               </span>
                               {hasExpenses && currentMonth && (
                                 <span className="w-2 h-2 rounded-full bg-violet-500 animate-pulse" />
@@ -1295,11 +1343,12 @@ export default function App() {
                         >
                           <div className="flex justify-between items-center mb-1">
                             <span className={cn(
-                              "text-[10px] sm:text-xs font-bold",
+                              "text-[10px] sm:text-xs font-bold flex items-center gap-1",
                               today ? "text-primary-600 dark:text-primary-400" : (isWeekend && currentMonth ? "text-slate-400 dark:text-slate-500" : "text-slate-600 dark:text-slate-300"),
                               (!currentMonth || crossedOut) && "text-slate-400 dark:text-slate-600"
                             )}>
                               {format(day, 'dd')}{today && <span className="hidden sm:inline"> Today</span>}
+                              {dayFare.note && currentMonth && <StickyNote size={10} className="text-amber-500" />}
                             </span>
                             <div className="flex items-center gap-1 z-10">
                               {isWeekend && currentMonth && !today && (
@@ -1441,6 +1490,18 @@ export default function App() {
                                 {currentSymbol}{tripTotal.toFixed(2)}
                               </span>
                             </div>
+
+                            <div className="pt-4 border-t border-slate-200 dark:border-slate-800">
+                              <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2 mb-2">
+                                <StickyNote size={14} className="text-amber-500" /> Day Note
+                              </label>
+                              <textarea
+                                value={trip.note || ''}
+                                onChange={(e) => handleWorkTripChange(currentDate, 'note', e.target.value)}
+                                placeholder="Add a note for today..."
+                                className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 min-h-[80px] resize-none text-slate-800 dark:text-slate-200"
+                              />
+                            </div>
                           </div>
                         );
                       }
@@ -1529,6 +1590,18 @@ export default function App() {
                                   <span className="text-3xl font-black text-primary-600 dark:text-primary-400">
                                     {currentSymbol}{(((parseFloat(dayFare.morning) || 0) + (parseFloat(dayFare.evening) || 0)) * currentRate).toFixed(2)}
                                   </span>
+                              </div>
+
+                              <div className="pt-4 border-t border-slate-200 dark:border-slate-800">
+                                <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2 mb-2">
+                                  <StickyNote size={14} className="text-amber-500" /> Day Note
+                                </label>
+                                <textarea
+                                  value={dayFare.note || ''}
+                                  onChange={(e) => handleFareChange(currentDate, 'note', e.target.value)}
+                                  placeholder="Add a note for today..."
+                                  className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 min-h-[80px] resize-none text-slate-800 dark:text-slate-200"
+                                />
                               </div>
                             </div>
                           )}
@@ -1837,17 +1910,17 @@ export default function App() {
 
           {!isCompactMode && (
             <>
-              {/* Summary Stat Card (Bento) */}
-              <div className={cn("md:col-span-4 md:row-span-3 rounded-3xl p-6 lg:p-8 flex flex-col justify-center text-white relative overflow-hidden shadow-lg transition-colors", trackingMode === 'worktrip' ? "bg-violet-955 bg-slate-900 dark:bg-slate-950" : "bg-slate-900 dark:bg-slate-950")}>
-                <div className="absolute -right-10 -top-10 w-40 h-40 bg-primary-500 rounded-full opacity-30 blur-3xl pointer-events-none"></div>
-                <div className="absolute -left-10 -bottom-10 w-40 h-40 bg-secondary-500 rounded-full opacity-20 blur-3xl pointer-events-none"></div>
-                
-                {trackingMode === 'worktrip' ? (
-                  <>
-                    <span className="text-violet-305 text-violet-400 text-sm font-semibold uppercase tracking-widest mb-1.5 z-10 flex items-center gap-1.5">
+              {trackingMode === 'worktrip' ? (
+                <>
+                  {/* Summary Stat Card (Bento) */}
+                  <div className="md:col-span-4 md:row-span-2 rounded-3xl p-6 lg:p-7 flex flex-col justify-center text-white relative overflow-hidden shadow-lg transition-colors bg-slate-900 dark:bg-slate-950">
+                    <div className="absolute -right-10 -top-10 w-40 h-40 bg-violet-500 rounded-full opacity-30 blur-3xl pointer-events-none"></div>
+                    <div className="absolute -left-10 -bottom-10 w-40 h-40 bg-fuchsia-500 rounded-full opacity-25 blur-3xl pointer-events-none"></div>
+                    
+                    <span className="text-violet-400 text-sm font-semibold uppercase tracking-widest mb-1.5 z-10 flex items-center gap-1.5">
                       <Briefcase size={14} /> Month Trip Expenses
                     </span>
-                    <h3 className="text-4xl lg:text-5xl font-black mb-3 z-10 tracking-tight">
+                    <h3 className="text-3xl lg:text-4xl font-black mb-3 z-10 tracking-tight">
                       {currentSymbol}{workTripAnalytics.workTripTotalThisMonth.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </h3>
                     <div className="space-y-1.5 mt-1 pt-3 border-t border-slate-800 z-10 w-full">
@@ -1868,9 +1941,158 @@ export default function App() {
                         <span className="font-bold text-slate-200">{currentSymbol}{workTripAnalytics.wtMiscTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                     </div>
-                  </>
-                ) : (
-                  <>
+                  </div>
+
+                  {/* Allowance & Savings Report Card */}
+                  <div className="md:col-span-4 md:row-span-2 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm p-5 flex flex-col justify-between transition-colors">
+                    <div>
+                      <div className="flex justify-between items-center mb-3">
+                        <span className="text-violet-600 dark:text-violet-400 text-xs font-black uppercase tracking-widest flex items-center gap-1.5">
+                          <TrendingUp size={14} /> Allowance & Savings
+                        </span>
+                        <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-full uppercase tracking-wider">
+                          Report Card
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3 mb-3">
+                        <div className="bg-slate-50 dark:bg-slate-800/40 p-3 rounded-2xl border border-slate-100 dark:border-slate-800 flex flex-col">
+                          <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1">Trip Allowance</span>
+                          <span className="text-lg font-black text-slate-900 dark:text-white">
+                            {currentSymbol}{totalAllowance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                          <span className="text-[9px] text-slate-400 font-semibold mt-0.5">
+                            {workTripAnalytics.workTripDaysThisMonth} days × {currentSymbol}{dailyAllowanceSelected.toFixed(0)}
+                          </span>
+                        </div>
+
+                        <div className="bg-slate-50 dark:bg-slate-800/40 p-3 rounded-2xl border border-slate-100 dark:border-slate-800 flex flex-col">
+                          <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1">Spent (Acc. + Food)</span>
+                          <span className="text-lg font-black text-rose-600 dark:text-rose-400">
+                            {currentSymbol}{totalSpentAccFood.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                          <span className="text-[9px] text-slate-400 font-semibold mt-0.5">
+                            Other spent: {currentSymbol}{(workTripAnalytics.wtWaterTotal + workTripAnalytics.wtMiscTotal).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Savings Status Bar / Message */}
+                      <div className={cn(
+                        "p-3 rounded-2xl border flex flex-col gap-1.5 transition-colors",
+                        totalSavings >= 0 
+                          ? "bg-emerald-50/50 dark:bg-emerald-950/15 border-emerald-100 dark:border-emerald-900/40" 
+                          : "bg-rose-50/50 dark:bg-rose-950/15 border-rose-100 dark:border-rose-900/40"
+                      )}>
+                        <div className="flex justify-between items-center">
+                          <span className="text-[10px] font-bold text-slate-550 dark:text-slate-400 uppercase tracking-widest">
+                            {totalSavings >= 0 ? "Managed to Save" : "Overspent by"}
+                          </span>
+                          <span className={cn("text-xs font-black", totalSavings >= 0 ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-455")}>
+                            {totalSavings >= 0 ? "+" : ""}{savingsPercentage.toFixed(1)}%
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-end">
+                          <span className={cn("text-xl font-black tracking-tight", totalSavings >= 0 ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-450")}>
+                            {currentSymbol}{Math.abs(totalSavings).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                          <span className="text-[9px] text-slate-400 font-semibold">
+                            of {currentSymbol}{totalAllowance.toLocaleString(undefined, { maximumFractionDigits: 0 })} allowance
+                          </span>
+                        </div>
+                        {/* Progress Bar */}
+                        <div className="w-full bg-slate-200/50 dark:bg-slate-800/80 rounded-full h-1.5 overflow-hidden">
+                          <div 
+                            className={cn("h-full rounded-full transition-all duration-500", totalSavings >= 0 ? "bg-emerald-500" : "bg-rose-500")}
+                            style={{ width: `${Math.min(100, Math.max(0, totalSavings >= 0 ? savingsPercentage : (Math.abs(totalSavings) / (totalAllowance || 1)) * 100))}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Inline Allowance editor */}
+                    <div className="mt-3 pt-2 border-t border-slate-100 dark:border-slate-800/50 flex justify-between items-center shrink-0">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Configure Allowance</span>
+                      <div className="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-200/60 dark:border-slate-700">
+                        <span className="text-[10px] font-bold text-slate-400">{currentSymbol}</span>
+                        <input
+                          type="number"
+                          step="any"
+                          placeholder="Allowance"
+                          value={allowanceInput}
+                          onChange={(e) => {
+                            setAllowanceInput(e.target.value);
+                            const num = parseFloat(e.target.value);
+                            if (!isNaN(num)) {
+                              setDailyAllowanceGhs((num / currentRate).toString());
+                            } else if (e.target.value === '') {
+                              setDailyAllowanceGhs('');
+                            }
+                          }}
+                          className="w-16 bg-transparent text-xs font-black text-slate-800 dark:text-white text-right outline-none focus:ring-0"
+                        />
+                        <span className="text-[9px] font-medium text-slate-400 uppercase tracking-widest border-l border-slate-200 dark:border-slate-700 pl-1.5">Daily</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Average Trip Tracker */}
+                  <div className="md:col-span-2 md:row-span-2 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm p-4 lg:p-5 flex flex-col justify-between transition-colors">
+                    <div>
+                      <div className="w-9 h-9 rounded-xl flex items-center justify-center mb-3 bg-violet-50 dark:bg-violet-950/30 text-violet-650 dark:text-violet-400">
+                        <Briefcase size={18} strokeWidth={2.5} />
+                      </div>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 font-bold">
+                        Trip Day Avg
+                      </p>
+                      <p className="text-xl lg:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+                        {currentSymbol}{(workTripAnalytics.workTripDaysThisMonth > 0 ? workTripAnalytics.workTripTotalThisMonth / workTripAnalytics.workTripDaysThisMonth : 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold px-3 py-1 rounded-full w-fit uppercase tracking-wide text-violet-700 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/40">
+                        {workTripAnalytics.workTripDaysThisMonth} Trip Days
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Monthly Trend Chart */}
+                  <div className="md:col-span-2 md:row-span-2 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm p-4 flex flex-col transition-colors">
+                    <div className="mb-2">
+                      <p className="text-xs text-slate-500 dark:text-slate-400 font-bold">Trip Trend</p>
+                    </div>
+                    <div className="flex-1 w-full min-h-[85px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart data={workTripAnalytics.chartData} margin={{ top: 5, right: 0, left: 0, bottom: 0 }}>
+                          <Tooltip 
+                            cursor={{fill: isDarkMode ? '#1e293b' : '#f1f5f9'}}
+                            content={<CustomTooltip currentSymbol={currentSymbol} currentDate={currentDate} trackingMode={trackingMode} />}
+                          />
+                          <Bar 
+                            dataKey="wtTotal" 
+                            fill="#8b5cf6" 
+                            radius={[3, 3, 3, 3]} 
+                            onClick={(data) => {
+                              if (data && data.payload) {
+                                const newDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), parseInt(data.payload.date));
+                                setCurrentDate(newDate);
+                                setView('day');
+                              }
+                            }}
+                            cursor="pointer"
+                          />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {/* Summary Stat Card (Bento) */}
+                  <div className="md:col-span-4 md:row-span-3 rounded-3xl p-6 lg:p-8 flex flex-col justify-center text-white relative overflow-hidden shadow-lg transition-colors bg-slate-900 dark:bg-slate-950">
+                    <div className="absolute -right-10 -top-10 w-40 h-40 bg-primary-500 rounded-full opacity-30 blur-3xl pointer-events-none"></div>
+                    <div className="absolute -left-10 -bottom-10 w-40 h-40 bg-secondary-500 rounded-full opacity-20 blur-3xl pointer-events-none"></div>
+                    
                     <span className="text-primary-300 dark:text-primary-400 text-sm font-semibold uppercase tracking-widest mb-2 z-10">Month Total Spent</span>
                     <h3 className="text-5xl lg:text-6xl font-black mb-4 z-10 tracking-tight">
                       {currentSymbol}{transitAnalytics.totalThisMonth.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -1881,75 +2103,60 @@ export default function App() {
                         <span className="text-white font-bold">{currentSymbol}{transitAnalytics.forecast.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </p>
                     </div>
-                  </>
-                )}
-              </div>
-
-              {/* Average Daily Tracker */}
-              <div className="md:col-span-2 md:row-span-3 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm p-5 lg:p-6 flex flex-col justify-between transition-colors">
-                <div>
-                  <div className={cn(
-                    "w-10 h-10 rounded-xl flex items-center justify-center mb-4 transition-colors animate-pulse",
-                    trackingMode === 'worktrip' 
-                      ? "bg-violet-50 dark:bg-violet-950/30 text-violet-650 dark:text-violet-400"
-                      : "bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400"
-                  )}>
-                    {trackingMode === 'worktrip' ? <Briefcase size={20} strokeWidth={2.5} /> : <TrendingUp size={20} strokeWidth={2.5} />}
                   </div>
-                  <p className="text-sm text-slate-500 dark:text-slate-400 font-medium font-bold">
-                    {trackingMode === 'worktrip' ? "Trip Day Avg" : "Daily Avg"}
-                  </p>
-                  <p className="text-2xl lg:text-3xl font-bold tracking-tight text-slate-900 dark:text-white">
-                    {currentSymbol}{(trackingMode === 'worktrip' 
-                      ? (workTripAnalytics.workTripDaysThisMonth > 0 ? workTripAnalytics.workTripTotalThisMonth / workTripAnalytics.workTripDaysThisMonth : 0) 
-                      : transitAnalytics.avgDaily
-                    ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </p>
-                </div>
-                <div className="mt-4">
-                  <p className={cn(
-                    "text-[10px] font-bold px-3 py-1 rounded-full w-fit uppercase tracking-wide transition-colors",
-                    trackingMode === 'worktrip'
-                      ? "text-violet-700 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/40"
-                      : "text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/40"
-                  )}>
-                    {trackingMode === 'worktrip' ? `${workTripAnalytics.workTripDaysThisMonth} Trip Days Covered` : `${transitAnalytics.activeDaysCount} Days Traveled`}
-                  </p>
-                </div>
-              </div>
 
-              {/* Monthly Trend Chart */}
-              <div className="md:col-span-2 md:row-span-3 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm p-4 lg:p-6 flex flex-col transition-colors">
-                <div className="mb-2">
-                  <p className="text-sm text-slate-500 dark:text-slate-400 font-bold font-medium">Daily Spending Trend</p>
-                </div>
-                <div className="flex-1 w-full min-h-[100px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={trackingMode === 'worktrip' ? workTripAnalytics.chartData : transitAnalytics.chartData} margin={{ top: 10, right: 0, left: 0, bottom: 0 }}>
-                      <Tooltip 
-                        cursor={{fill: isDarkMode ? '#1e293b' : '#f1f5f9'}}
-                        content={<CustomTooltip currentSymbol={currentSymbol} currentDate={currentDate} trackingMode={trackingMode} />}
-                      />
-                      <Bar 
-                        dataKey={trackingMode === 'worktrip' ? "wtTotal" : "total"} 
-                        fill={trackingMode === 'worktrip' ? "#8b5cf6" : "var(--theme-500, var(--color-indigo-500))"} 
-                        radius={[4, 4, 4, 4]} 
-                        onClick={(data) => {
-                          if (data && data.payload) {
-                            const newDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), parseInt(data.payload.date));
-                            setCurrentDate(newDate);
-                            setView('day');
-                          }
-                        }}
-                        cursor="pointer"
-                      />
-                      {trackingMode !== 'worktrip' && (
-                        <Line type="stepAfter" dataKey="average" stroke="#f43f5e" strokeWidth={2} strokeDasharray="5 5" dot={false} />
-                      )}
-                    </ComposedChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
+                  {/* Average Daily Tracker */}
+                  <div className="md:col-span-2 md:row-span-3 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm p-5 lg:p-6 flex flex-col justify-between transition-colors">
+                    <div>
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-4 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 animate-pulse">
+                        <TrendingUp size={20} strokeWidth={2.5} />
+                      </div>
+                      <p className="text-sm text-slate-500 dark:text-slate-400 font-bold">
+                        Daily Avg
+                      </p>
+                      <p className="text-2xl lg:text-3xl font-bold tracking-tight text-slate-900 dark:text-white">
+                        {currentSymbol}{transitAnalytics.avgDaily.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </p>
+                    </div>
+                    <div className="mt-4">
+                      <p className="text-[10px] font-bold px-3 py-1 rounded-full w-fit uppercase tracking-wide text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40">
+                        {transitAnalytics.activeDaysCount} Days Traveled
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Monthly Trend Chart */}
+                  <div className="md:col-span-2 md:row-span-3 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm p-4 lg:p-6 flex flex-col transition-colors">
+                    <div className="mb-2">
+                      <p className="text-sm text-slate-500 dark:text-slate-400 font-bold">Daily Spending Trend</p>
+                    </div>
+                    <div className="flex-1 w-full min-h-[100px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart data={transitAnalytics.chartData} margin={{ top: 10, right: 0, left: 0, bottom: 0 }}>
+                          <Tooltip 
+                            cursor={{fill: isDarkMode ? '#1e293b' : '#f1f5f9'}}
+                            content={<CustomTooltip currentSymbol={currentSymbol} currentDate={currentDate} trackingMode={trackingMode} />}
+                          />
+                          <Bar 
+                            dataKey="total" 
+                            fill="var(--theme-500, var(--color-indigo-500))" 
+                            radius={[4, 4, 4, 4]} 
+                            onClick={(data) => {
+                              if (data && data.payload) {
+                                const newDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), parseInt(data.payload.date));
+                                setCurrentDate(newDate);
+                                setView('day');
+                              }
+                            }}
+                            cursor="pointer"
+                          />
+                          <Line type="stepAfter" dataKey="average" stroke="#f43f5e" strokeWidth={2} strokeDasharray="5 5" dot={false} />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </>
+              )}
             </>
           )}
 
@@ -2029,6 +2236,23 @@ export default function App() {
                           <option key={c} value={c}>{c}</option>
                         ))}
                       </select>
+                    </div>
+
+                    <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                      <div className="flex flex-col">
+                        <span className="text-sm font-semibold">Daily Trip Allowance</span>
+                        <span className="text-[10px] text-slate-400 font-medium">For Work Trip calculations</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg px-2 py-1 shadow-sm">
+                        <span className="text-xs font-black text-slate-400">₵</span>
+                        <input
+                          type="number"
+                          step="any"
+                          value={dailyAllowanceGhs}
+                          onChange={e => setDailyAllowanceGhs(e.target.value)}
+                          className="w-16 bg-transparent text-xs font-black text-right outline-none text-slate-900 dark:text-white"
+                        />
+                      </div>
                     </div>
                   </div>
 

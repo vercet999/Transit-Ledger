@@ -26,6 +26,7 @@ service cloud.firestore {
                  ( !('morning' in data) || (data.morning is string && data.morning.size() <= 50)) &&
                  ( !('evening' in data) || (data.evening is string && data.evening.size() <= 50)) &&
                  ( !('crossedOut' in data) || data.crossedOut is bool) &&
+                 ( !('note' in data) || (data.note is string && data.note.size() <= 200)) &&
                  ( !('updatedAt' in data) || data.updatedAt == request.time || data.updatedAt is timestamp );
         }
 
@@ -34,7 +35,7 @@ service cloud.firestore {
 
         allow create: if isOwner(userId) && isValidId(fareId) && isValidFare(incoming());
         allow update: if isOwner(userId) && isValidFare(incoming()) && incoming().userId == existing().userId &&
-          incoming().diff(existing()).affectedKeys().hasOnly(['morning', 'evening', 'crossedOut', 'updatedAt']);
+          incoming().diff(existing()).affectedKeys().hasOnly(['morning', 'evening', 'crossedOut', 'note', 'updatedAt']);
         allow delete: if isOwner(userId);
       }
 
@@ -46,6 +47,7 @@ service cloud.firestore {
                  ( !('food' in data) || (data.food is string && data.food.size() <= 50)) &&
                  ( !('water' in data) || (data.water is string && data.water.size() <= 50)) &&
                  ( !('misc' in data) || (data.misc is string && data.misc.size() <= 50)) &&
+                 ( !('note' in data) || (data.note is string && data.note.size() <= 200)) &&
                  ( !('updatedAt' in data) || data.updatedAt == request.time || data.updatedAt is timestamp );
         }
 
@@ -54,7 +56,7 @@ service cloud.firestore {
 
         allow create: if isOwner(userId) && isValidId(worktripId) && isValidWorkTrip(incoming());
         allow update: if isOwner(userId) && isValidWorkTrip(incoming()) && incoming().userId == existing().userId &&
-          incoming().diff(existing()).affectedKeys().hasOnly(['accommodation', 'food', 'water', 'misc', 'updatedAt']);
+          incoming().diff(existing()).affectedKeys().hasOnly(['accommodation', 'food', 'water', 'misc', 'note', 'updatedAt']);
         allow delete: if isOwner(userId);
       }
 
@@ -66,15 +68,16 @@ service cloud.firestore {
                  (!('remindersEnabled' in data) || data.remindersEnabled is bool) &&
                  (!('morningReminderTime' in data) || (data.morningReminderTime is string && data.morningReminderTime.size() <= 10)) &&
                  (!('eveningReminderTime' in data) || (data.eveningReminderTime is string && data.eveningReminderTime.size() <= 10)) &&
-                 (!('accentColor' in data) || (data.accentColor is string && data.accentColor.size() <= 20)) &&
-                 (!('recurringMorning' in data) || (data.recurringMorning is string && data.recurringMorning.size() <= 20)) &&
-                 (!('recurringEvening' in data) || (data.recurringEvening is string && data.recurringEvening.size() <= 20));
+                 (!('accentColor' in data) || (data.accentColor is string && data.accentColor.size() <= 50)) &&
+                 (!('recurringMorning' in data) || (data.recurringMorning is string && data.recurringMorning.size() <= 50)) &&
+                 (!('recurringEvening' in data) || (data.recurringEvening is string && data.recurringEvening.size() <= 50)) &&
+                 (!('dailyAllowanceGhs' in data) || (data.dailyAllowanceGhs is string && data.dailyAllowanceGhs.size() <= 50));
         }
 
         allow get: if isOwner(userId);
         allow create: if isOwner(userId) && isValidSettings(incoming());
         allow update: if isOwner(userId) && isValidSettings(incoming()) && incoming().userId == existing().userId &&
-             incoming().diff(existing()).affectedKeys().hasOnly(['currency', 'remindersEnabled', 'morningReminderTime', 'eveningReminderTime', 'accentColor', 'recurringMorning', 'recurringEvening']);
+             incoming().diff(existing()).affectedKeys().hasOnly(['currency', 'remindersEnabled', 'morningReminderTime', 'eveningReminderTime', 'accentColor', 'recurringMorning', 'recurringEvening', 'dailyAllowanceGhs']);
         allow delete: if isOwner(userId);
       }
     }
